@@ -30,19 +30,20 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      // Aceita qualquer foto — imagens são salvas no IndexedDB (sem limite de tamanho)
+      // Comprime para 1080px e qualidade 72% — base64 resultante ~150-300KB
+      // que cabe tranquilamente no limite de 1MB do Firestore
       final file = await _picker.pickImage(
         source: source,
-        maxWidth: 1920,
-        maxHeight: 1920,
-        imageQuality: 85,
+        maxWidth: 1080,
+        maxHeight: 1080,
+        imageQuality: 72,
       );
       if (file == null) return;
       final bytes = await file.readAsBytes();
 
       setState(() {
         _imageBytes = bytes;
-        _imageBase64 = base64Encode(bytes);
+        _imageBase64 = 'data:image/jpeg;base64,${base64Encode(bytes)}';
       });
     } catch (e) {
       if (mounted) {

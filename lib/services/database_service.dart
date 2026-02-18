@@ -3,15 +3,13 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 
 class DatabaseService extends ChangeNotifier {
-  final _auth    = FirebaseAuth.instance;
-  final _db      = FirebaseFirestore.instance;
-  final _storage = FirebaseStorage.instance;
-  final _uuid    = const Uuid();
+  final _auth = FirebaseAuth.instance;
+  final _db   = FirebaseFirestore.instance;
+  final _uuid = const Uuid();
 
   AppUser?              _currentUser;
   List<Post>            _posts         = [];
@@ -217,13 +215,9 @@ class DatabaseService extends ChangeNotifier {
       updates['allowPublicPinsOnMyPosts'] = allowPublicPins;
     }
     if (avatarBytes != null) {
-      final url = await _uploadImage(
-        'avatars/${_currentUser!.id}.jpg', avatarBytes,
-      );
-      if (url != null) {
-        _currentUser!.avatarBase64 = url;
-        updates['avatarUrl'] = url;
-      }
+      final avatarData = _toBase64DataUri(avatarBytes);
+      _currentUser!.avatarBase64 = avatarData;
+      updates['avatarUrl'] = avatarData;
     }
     if (updates.isNotEmpty) {
       await _db.collection('users').doc(_currentUser!.id).update(updates);
@@ -246,22 +240,12 @@ class DatabaseService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── UPLOAD IMAGEM (Firebase Storage) ─────────────────────────────────────────
-  Future<String?> _uploadImage(String path, Uint8List bytes) async {
-    try {
-      final ref = _storage.ref().child(path);
-      await ref.putData(
-        bytes,
-        SettableMetadata(contentType: 'image/jpeg'),
-      );
-      // Usar getDownloadURL() para obter URL real com token de acesso
-      final downloadUrl = await ref.getDownloadURL();
-      return downloadUrl;
-    } catch (e) {
-      if (kDebugMode) debugPrint('[DB] _uploadImage erro: $e');
-      // Fallback: salvar como base64 se Storage falhar
-      return 'data:image/jpeg;base64,${base64Encode(bytes)}';
-    }
+  // ── IMAGEM: comprime bytes e converte para base64 data URI ───────────────────
+  // Limita a imagem a ~700px e qualidade 70% para caber no Firestore (< 1MB doc)
+  String _toBase64DataUri(Uint8List bytes) {
+    // Converte direto para base64 — a compressão já foi feita no ImagePicker
+    // (maxWidth/maxHeight 1080, quality 72 definidos na tela de criar post)
+    return 'data:image/jpeg;base64,${base64Encode(bytes)}';
   }
 
   // ── FOLLOWS ──────────────────────────────────────────────────────────────────
@@ -320,26 +304,15 @@ class DatabaseService extends ChangeNotifier {
   }) async {
     final pid = _uuid.v4();
 
-    // Fallback imediato: base64 para exibir sem depender do Storage
-    final imageBase64Fallback = 'data:image/jpeg;base64,${base64Encode(imageBytes)}';
-
-    // Upload da imagem para Firebase Storage
-    String imageUrl = imageBase64Fallback; // começa com fallback
-    try {
-      final uploadedUrl = await _uploadImage('posts/$pid.jpg', imageBytes);
-      if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
-        imageUrl = uploadedUrl;
-      }
-    } catch (e) {
-      if (kDebugMode) debugPrint('[DB] createPost upload falhou, usando base64: $e');
-    }
+    // Converte imagem para base64 data URI (sem depender do Firebase Storage)
+    final imageData = _toBase64DataUri(imageBytes);
 
     final post = Post(
       id: pid,
       ownerId: _currentUser!.id,
       ownerName: _currentUser!.name,
       ownerAvatarBase64: _currentUser!.avatarBase64 ?? '',
-      imageBase64: imageUrl,
+      imageBase64: imageData,
       caption: caption,
       createdAt: DateTime.now(),
     );
@@ -364,7 +337,6 @@ class DatabaseService extends ChangeNotifier {
     final commSnap = await _db.collection('comments').where('postId', isEqualTo: postId).get();
     for (final d in commSnap.docs) batch.delete(d.reference);
     await batch.commit();
-    try { await _storage.ref('posts/$postId.jpg').delete(); } catch (_) {}
     notifyListeners();
   }
 
