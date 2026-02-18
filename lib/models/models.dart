@@ -105,16 +105,22 @@ class Post {
     allowPublicPinsOverride: d['allowPublicPinsOverride'] as bool? ?? true,
   );
 
-  Map<String, dynamic> toFirestore() => {
-    'ownerId': ownerId, 'ownerName': ownerName,
-    'ownerAvatarBase64': ownerAvatarBase64,
-    'imageBase64': imageBase64,
-    'caption': caption,
-    'createdAt': Timestamp.fromDate(createdAt),
-    'notaMedia': notaMedia, 'totalPins': totalPins,
-    'totalAvaliadores': totalAvaliadores, 'totalComments': totalComments,
-    'allowPublicPinsOverride': allowPublicPinsOverride,
-  };
+  Map<String, dynamic> toFirestore() {
+    // Se imageBase64 é uma URL (Firebase Storage ou data:URI), salva também como imageUrl
+    final isUrl = imageBase64.startsWith('http://') || imageBase64.startsWith('https://');
+    return {
+      'ownerId': ownerId, 'ownerName': ownerName,
+      'ownerAvatarBase64': ownerAvatarBase64,
+      'imageBase64': imageBase64,
+      // Campo imageUrl: só preenche quando for URL real (evita salvar base64 enorme duplicado)
+      if (isUrl) 'imageUrl': imageBase64,
+      'caption': caption,
+      'createdAt': Timestamp.fromDate(createdAt),
+      'notaMedia': notaMedia, 'totalPins': totalPins,
+      'totalAvaliadores': totalAvaliadores, 'totalComments': totalComments,
+      'allowPublicPinsOverride': allowPublicPinsOverride,
+    };
+  }
 
   Map<String, dynamic> toJson() => {
     'id': id, 'ownerId': ownerId, 'ownerName': ownerName,

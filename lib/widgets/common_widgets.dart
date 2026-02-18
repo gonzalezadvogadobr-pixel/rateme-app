@@ -5,10 +5,13 @@ import '../theme/app_theme.dart';
 // Helper: detecta se string é uma URL HTTP(S)
 bool _isHttpUrl(String? s) => s != null && (s.startsWith('http://') || s.startsWith('https://'));
 
+// Helper: detecta se string é data URI base64 (ex: data:image/jpeg;base64,...)
+bool _isDataUri(String? s) => s != null && s.startsWith('data:');
+
 /// Exibe uma imagem a partir de URL (Firebase Storage), base64 ou placeholder demo.
 /// Prioridade: imageUrl > imageData (base64/demo).
 class AppImage extends StatelessWidget {
-  final String imageData;  // base64 ou 'demo:...' – usado como fallback
+  final String imageData;  // URL http/https, data:URI base64, 'demo:...' ou base64 puro
   final String? imageUrl;  // URL Firebase Storage – prioritário quando não vazio
   final double? width;
   final double? height;
@@ -29,7 +32,7 @@ class AppImage extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget img;
 
-    // Se imageData contém uma URL (Firebase Storage), usa ela como imageUrl
+    // Determina a URL efetiva (imageUrl tem prioridade, depois imageData se for URL)
     final effectiveUrl = _isHttpUrl(imageUrl)
         ? imageUrl
         : _isHttpUrl(imageData)
@@ -43,6 +46,8 @@ class AppImage extends StatelessWidget {
         width: width,
         height: height,
         fit: fit,
+        // CORS: necessário para Firebase Storage na web
+        headers: const {'Access-Control-Allow-Origin': '*'},
         loadingBuilder: (_, child, progress) => progress == null
             ? child
             : Container(
@@ -54,8 +59,34 @@ class AppImage extends StatelessWidget {
                   ),
                 ),
               ),
-        errorBuilder: (_, __, ___) => _errorWidget(),
+        errorBuilder: (context, error, stackTrace) {
+          // Se URL do Firebase falhar, tenta carregar data URI se disponível
+          if (_isDataUri(imageData)) {
+            try {
+              final base64Str = imageData.split(',').last;
+              final bytes = base64Decode(base64Str);
+              return Image.memory(bytes, width: width, height: height, fit: fit,
+                  errorBuilder: (_, __, ___) => _errorWidget());
+            } catch (_) {}
+          }
+          return _errorWidget();
+        },
       );
+    // Prioridade 2: data:URI base64 (ex: "data:image/jpeg;base64,/9j/...")
+    } else if (_isDataUri(imageData)) {
+      try {
+        final base64Str = imageData.split(',').last;
+        final bytes = base64Decode(base64Str);
+        img = Image.memory(
+          bytes,
+          width: width,
+          height: height,
+          fit: fit,
+          errorBuilder: (_, __, ___) => _errorWidget(),
+        );
+      } catch (_) {
+        img = _errorWidget();
+      }
     } else if (imageData.startsWith('demo:')) {
       final parts = imageData.split(':');
       final color1 = _hexToColor(parts[1]);
@@ -180,6 +211,18 @@ class UserAvatar extends StatelessWidget {
         backgroundColor: AppTheme.purple,
         child: null,
       );
+    }
+    // Prioridade 3: data:URI base64
+    if (_isDataUri(avatarBase64)) {
+      try {
+        final base64Str = avatarBase64!.split(',').last;
+        final bytes = base64Decode(base64Str);
+        return CircleAvatar(
+          radius: size / 2,
+          backgroundImage: MemoryImage(bytes),
+          backgroundColor: AppTheme.purple,
+        );
+      } catch (_) {}
     }
     if (avatarBase64 != null && avatarBase64!.isNotEmpty) {
       try {

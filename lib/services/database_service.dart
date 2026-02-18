@@ -254,10 +254,9 @@ class DatabaseService extends ChangeNotifier {
         bytes,
         SettableMetadata(contentType: 'image/jpeg'),
       );
-      // Usar URL pública sem token (bucket tem IAM público)
-      final bucket = _storage.bucket;
-      final encodedPath = Uri.encodeComponent(path);
-      return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/$encodedPath?alt=media';
+      // Usar getDownloadURL() para obter URL real com token de acesso
+      final downloadUrl = await ref.getDownloadURL();
+      return downloadUrl;
     } catch (e) {
       if (kDebugMode) debugPrint('[DB] _uploadImage erro: $e');
       // Fallback: salvar como base64 se Storage falhar
@@ -321,15 +320,26 @@ class DatabaseService extends ChangeNotifier {
   }) async {
     final pid = _uuid.v4();
 
+    // Fallback imediato: base64 para exibir sem depender do Storage
+    final imageBase64Fallback = 'data:image/jpeg;base64,${base64Encode(imageBytes)}';
+
     // Upload da imagem para Firebase Storage
-    final imageUrl = await _uploadImage('posts/$pid.jpg', imageBytes);
+    String imageUrl = imageBase64Fallback; // começa com fallback
+    try {
+      final uploadedUrl = await _uploadImage('posts/$pid.jpg', imageBytes);
+      if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
+        imageUrl = uploadedUrl;
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[DB] createPost upload falhou, usando base64: $e');
+    }
 
     final post = Post(
       id: pid,
       ownerId: _currentUser!.id,
       ownerName: _currentUser!.name,
       ownerAvatarBase64: _currentUser!.avatarBase64 ?? '',
-      imageBase64: imageUrl ?? '',
+      imageBase64: imageUrl,
       caption: caption,
       createdAt: DateTime.now(),
     );
