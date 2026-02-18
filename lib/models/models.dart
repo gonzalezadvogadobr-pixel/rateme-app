@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 DateTime _toDateTime(dynamic v) {
-  if (v is String) return DateTime.tryParse(v) ?? DateTime.now();
+  if (v is Timestamp) return v.toDate();
+  if (v is String)    return DateTime.tryParse(v) ?? DateTime.now();
   return DateTime.now();
 }
 
@@ -12,7 +14,7 @@ class AppUser {
   String name;
   String email;
   final String passwordHash;
-  String? avatarBase64;
+  String? avatarBase64;   // URL do Firebase Storage ou base64
   bool allowPublicPinsOnMyPosts;
   String bio;
   final DateTime createdAt;
@@ -33,11 +35,20 @@ class AppUser {
     name: d['name'] as String? ?? '',
     email: d['email'] as String? ?? '',
     passwordHash: d['passwordHash'] as String? ?? '',
-    avatarBase64: d['avatarBase64'] as String?,
+    avatarBase64: (d['avatarUrl'] ?? d['avatarBase64']) as String?,
     allowPublicPinsOnMyPosts: d['allowPublicPinsOnMyPosts'] as bool? ?? true,
     bio: d['bio'] as String? ?? '',
     createdAt: _toDateTime(d['createdAt']),
   );
+
+  // Para salvar no Firestore (sem imageBase64 enorme, usa avatarUrl)
+  Map<String, dynamic> toFirestore() => {
+    'name': name, 'email': email,
+    'avatarUrl': avatarBase64 ?? '',
+    'allowPublicPinsOnMyPosts': allowPublicPinsOnMyPosts,
+    'bio': bio,
+    'createdAt': Timestamp.fromDate(createdAt),
+  };
 
   Map<String, dynamic> toJson() => {
     'id': id, 'name': name, 'email': email,
@@ -54,8 +65,8 @@ class Post {
   final String id;
   final String ownerId;
   String ownerName;
-  String? ownerAvatarBase64;
-  String imageBase64;
+  String ownerAvatarBase64;   // URL ou base64 do avatar do dono
+  String imageBase64;          // URL do Firebase Storage ou base64
   String caption;
   final DateTime createdAt;
   double notaMedia;
@@ -68,7 +79,7 @@ class Post {
     required this.id,
     required this.ownerId,
     required this.ownerName,
-    this.ownerAvatarBase64,
+    this.ownerAvatarBase64 = '',
     required this.imageBase64,
     this.caption = '',
     required this.createdAt,
@@ -83,8 +94,8 @@ class Post {
     id: d['id'] as String? ?? '',
     ownerId: d['ownerId'] as String? ?? '',
     ownerName: d['ownerName'] as String? ?? '',
-    ownerAvatarBase64: d['ownerAvatarBase64'] as String?,
-    imageBase64: d['imageBase64'] as String? ?? '',
+    ownerAvatarBase64: (d['ownerAvatarBase64'] ?? d['ownerAvatarUrl'] ?? '') as String,
+    imageBase64: (d['imageBase64'] ?? d['imageUrl'] ?? '') as String,
     caption: d['caption'] as String? ?? '',
     createdAt: _toDateTime(d['createdAt']),
     notaMedia: (d['notaMedia'] as num?)?.toDouble() ?? 0.0,
@@ -94,9 +105,20 @@ class Post {
     allowPublicPinsOverride: d['allowPublicPinsOverride'] as bool? ?? true,
   );
 
+  Map<String, dynamic> toFirestore() => {
+    'ownerId': ownerId, 'ownerName': ownerName,
+    'ownerAvatarBase64': ownerAvatarBase64,
+    'imageBase64': imageBase64,
+    'caption': caption,
+    'createdAt': Timestamp.fromDate(createdAt),
+    'notaMedia': notaMedia, 'totalPins': totalPins,
+    'totalAvaliadores': totalAvaliadores, 'totalComments': totalComments,
+    'allowPublicPinsOverride': allowPublicPinsOverride,
+  };
+
   Map<String, dynamic> toJson() => {
     'id': id, 'ownerId': ownerId, 'ownerName': ownerName,
-    'ownerAvatarBase64': ownerAvatarBase64 ?? '',
+    'ownerAvatarBase64': ownerAvatarBase64,
     'imageBase64': imageBase64, 'caption': caption,
     'createdAt': createdAt.toIso8601String(),
     'notaMedia': notaMedia, 'totalPins': totalPins,
@@ -111,7 +133,7 @@ class Pin {
   final String postId;
   final String authorId;
   String authorName;
-  String? authorAvatarBase64;
+  String authorAvatarBase64;
   double xPercent;
   double yPercent;
   String targetLabel;
@@ -127,7 +149,7 @@ class Pin {
     required this.postId,
     required this.authorId,
     required this.authorName,
-    this.authorAvatarBase64,
+    this.authorAvatarBase64 = '',
     required this.xPercent,
     required this.yPercent,
     required this.targetLabel,
@@ -144,7 +166,7 @@ class Pin {
     postId: d['postId'] as String? ?? '',
     authorId: d['authorId'] as String? ?? '',
     authorName: d['authorName'] as String? ?? '',
-    authorAvatarBase64: d['authorAvatarBase64'] as String?,
+    authorAvatarBase64: d['authorAvatarBase64'] as String? ?? '',
     xPercent: (d['xPercent'] as num?)?.toDouble() ?? 0.0,
     yPercent: (d['yPercent'] as num?)?.toDouble() ?? 0.0,
     targetLabel: d['targetLabel'] as String? ?? '',
@@ -156,9 +178,19 @@ class Pin {
     updatedAt: _toDateTime(d['updatedAt']),
   );
 
+  Map<String, dynamic> toFirestore() => {
+    'postId': postId, 'authorId': authorId, 'authorName': authorName,
+    'authorAvatarBase64': authorAvatarBase64,
+    'xPercent': xPercent, 'yPercent': yPercent,
+    'targetLabel': targetLabel, 'score': score,
+    'comment': comment, 'isPublic': isPublic, 'isDeleted': isDeleted,
+    'createdAt': Timestamp.fromDate(createdAt),
+    'updatedAt': Timestamp.fromDate(updatedAt),
+  };
+
   Map<String, dynamic> toJson() => {
     'id': id, 'postId': postId, 'authorId': authorId, 'authorName': authorName,
-    'authorAvatarBase64': authorAvatarBase64 ?? '',
+    'authorAvatarBase64': authorAvatarBase64,
     'xPercent': xPercent, 'yPercent': yPercent,
     'targetLabel': targetLabel, 'score': score,
     'comment': comment, 'isPublic': isPublic, 'isDeleted': isDeleted,
@@ -173,7 +205,7 @@ class PostComment {
   final String postId;
   final String authorId;
   String authorName;
-  String? authorAvatarBase64;
+  String authorAvatarBase64;
   String text;
   bool isDeleted;
   final DateTime createdAt;
@@ -183,7 +215,7 @@ class PostComment {
     required this.postId,
     required this.authorId,
     required this.authorName,
-    this.authorAvatarBase64,
+    this.authorAvatarBase64 = '',
     required this.text,
     this.isDeleted = false,
     required this.createdAt,
@@ -194,15 +226,22 @@ class PostComment {
     postId: d['postId'] as String? ?? '',
     authorId: d['authorId'] as String? ?? '',
     authorName: d['authorName'] as String? ?? '',
-    authorAvatarBase64: d['authorAvatarBase64'] as String?,
+    authorAvatarBase64: d['authorAvatarBase64'] as String? ?? '',
     text: d['text'] as String? ?? '',
     isDeleted: d['isDeleted'] as bool? ?? false,
     createdAt: _toDateTime(d['createdAt']),
   );
 
+  Map<String, dynamic> toFirestore() => {
+    'postId': postId, 'authorId': authorId, 'authorName': authorName,
+    'authorAvatarBase64': authorAvatarBase64,
+    'text': text, 'isDeleted': isDeleted,
+    'createdAt': Timestamp.fromDate(createdAt),
+  };
+
   Map<String, dynamic> toJson() => {
     'id': id, 'postId': postId, 'authorId': authorId, 'authorName': authorName,
-    'authorAvatarBase64': authorAvatarBase64 ?? '',
+    'authorAvatarBase64': authorAvatarBase64,
     'text': text, 'isDeleted': isDeleted,
     'createdAt': createdAt.toIso8601String(),
   };
@@ -216,7 +255,7 @@ class AppNotification {
   final String recipientId;
   final String actorId;
   String actorName;
-  String? actorAvatarBase64;
+  String actorAvatarBase64;
   final NotifType type;
   final String? postId;
   final String? pinId;
@@ -229,7 +268,7 @@ class AppNotification {
     required this.recipientId,
     required this.actorId,
     required this.actorName,
-    this.actorAvatarBase64,
+    this.actorAvatarBase64 = '',
     required this.type,
     this.postId,
     this.pinId,
@@ -261,7 +300,7 @@ class AppNotification {
     recipientId: d['recipientId'] as String? ?? '',
     actorId: d['actorId'] as String? ?? '',
     actorName: d['actorName'] as String? ?? '',
-    actorAvatarBase64: d['actorAvatarBase64'] as String?,
+    actorAvatarBase64: d['actorAvatarBase64'] as String? ?? '',
     type: NotifType.values.firstWhere(
       (e) => e.name == d['type'],
       orElse: () => NotifType.newPin,
@@ -273,10 +312,18 @@ class AppNotification {
     createdAt: _toDateTime(d['createdAt']),
   );
 
+  Map<String, dynamic> toFirestore() => {
+    'recipientId': recipientId, 'actorId': actorId, 'actorName': actorName,
+    'actorAvatarBase64': actorAvatarBase64,
+    'type': type.name, 'postId': postId, 'pinId': pinId,
+    'body': body, 'isRead': isRead,
+    'createdAt': Timestamp.fromDate(createdAt),
+  };
+
   Map<String, dynamic> toJson() => {
     'id': id, 'recipientId': recipientId,
     'actorId': actorId, 'actorName': actorName,
-    'actorAvatarBase64': actorAvatarBase64 ?? '',
+    'actorAvatarBase64': actorAvatarBase64,
     'type': type.name, 'postId': postId, 'pinId': pinId,
     'body': body, 'isRead': isRead,
     'createdAt': createdAt.toIso8601String(),

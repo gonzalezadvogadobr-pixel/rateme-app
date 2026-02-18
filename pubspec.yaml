@@ -9,7 +9,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Estado
   provider: 6.1.5+1
+  # Firebase
+  firebase_core: 3.6.0
+  firebase_auth: 5.3.1
+  cloud_firestore: 5.4.3
+  firebase_storage: 12.3.2
+  # Utilitários
   shared_preferences: 2.5.3
   image_picker: 1.1.2
   uuid: 4.5.1

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 import 'services/database_service.dart';
 import 'theme/app_theme.dart';
 import 'screens/auth_screen.dart';
@@ -8,6 +10,12 @@ import 'screens/home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Inicializar Firebase com opções multiplataforma
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -51,6 +59,14 @@ class _AppGate extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<DatabaseService>(
       builder: (context, db, _) {
+        if (db.isLoading) {
+          return const Scaffold(
+            backgroundColor: AppTheme.bgPrimary,
+            body: Center(
+              child: CircularProgressIndicator(color: AppTheme.purple),
+            ),
+          );
+        }
         if (!db.isLoggedIn) return const AuthScreen();
         return const HomeScreen();
       },

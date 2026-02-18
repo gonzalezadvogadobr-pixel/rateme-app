@@ -1,22 +1,17 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
-import 'image_storage.dart';
 
 class DatabaseService extends ChangeNotifier {
-  static const _kUsers         = 'users_v2';
-  static const _kPosts         = 'posts_v2';   // sem imageBase64 — fica no IndexedDB
-  static const _kPins          = 'pins_v2';
-  static const _kComments      = 'comments_v2';
-  static const _kNotifications = 'notifications_v2';
-  static const _kFollows       = 'follows_v2';
-  static const _kCurrentUser   = 'current_user_v2';
-
-  final _uuid = const Uuid();
-  SharedPreferences? _prefs;
+  final _auth    = FirebaseAuth.instance;
+  final _db      = FirebaseFirestore.instance;
+  final _storage = FirebaseStorage.instance;
+  final _uuid    = const Uuid();
 
   AppUser?              _currentUser;
   List<Post>            _posts         = [];
@@ -25,154 +20,170 @@ class DatabaseService extends ChangeNotifier {
   List<AppNotification> _notifications = [];
   List<Follow>          _follows       = [];
   List<AppUser>         _users         = [];
+  bool                  _isLoading     = true;
 
   AppUser?              get currentUser       => _currentUser;
   bool                  get isLoggedIn        => _currentUser != null;
+  bool                  get isLoading         => _isLoading;
   List<Post>            get posts             => _posts;
   List<AppUser>         get users             => _users;
   List<Follow>          get follows           => _follows;
   List<AppNotification> get notifications     => _notifications;
-
   int get unreadNotifCount => _notifications
       .where((n) => n.recipientId == _currentUser?.id && !n.isRead)
       .length;
 
   // ── INIT ────────────────────────────────────────────────────────────────────
   Future<void> init() async {
-    _prefs = await SharedPreferences.getInstance();
-    await _loadAll();
-    if (_users.isEmpty) await _seedDemoData();
-    final uid = _prefs!.getString(_kCurrentUser);
-    if (uid != null) {
-      try { _currentUser = _users.firstWhere((u) => u.id == uid); } catch (_) {}
+    _isLoading = true;
+    notifyListeners();
+    try {
+      // Verificar se já há usuário logado no Firebase Auth
+      final firebaseUser = _auth.currentUser;
+      if (firebaseUser != null) {
+        await _loadCurrentUser(firebaseUser.uid);
+        await _loadAllData();
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[DB] init erro: $e');
     }
-    // Carregar imagens do IndexedDB para cada post
-    await _loadPostImages();
+    _isLoading = false;
     notifyListeners();
   }
 
-  Future<void> _loadAll() async {
-    _users         = _loadList(_kUsers,         (j) => AppUser.fromJson(j));
-    _posts         = _loadList(_kPosts,         (j) => Post.fromJson(j));
-    _pins          = _loadList(_kPins,          (j) => Pin.fromJson(j));
-    _comments      = _loadList(_kComments,      (j) => PostComment.fromJson(j));
-    _notifications = _loadList(_kNotifications, (j) => AppNotification.fromJson(j));
-    _follows       = _loadList(_kFollows,       (j) => Follow.fromJson(j));
-  }
-
-  /// Carrega as imagens do IndexedDB e injeta nos posts correspondentes.
-  /// Posts com imageBase64 = 'idb:<id>' buscam a imagem no IndexedDB.
-  Future<void> _loadPostImages() async {
-    bool changed = false;
-    for (final post in _posts) {
-      if (post.imageBase64.startsWith('idb:')) {
-        final key = post.imageBase64.substring(4); // remove 'idb:'
-        final b64 = await ImageStorage.loadBase64(key);
-        if (b64 != null && b64.isNotEmpty) {
-          post.imageBase64 = b64;
-          changed = true;
-        }
-      }
-    }
-    if (changed) notifyListeners();
-  }
-
-  List<T> _loadList<T>(String key, T Function(Map<String,dynamic>) fromJson) {
-    final raw = _prefs?.getString(key);
-    if (raw == null) return [];
+  Future<void> _loadCurrentUser(String uid) async {
     try {
-      final list = jsonDecode(raw) as List;
-      return list.map((e) => fromJson(e as Map<String,dynamic>)).toList();
-    } catch (_) { return []; }
-  }
-
-  /// Salva metadados no SharedPreferences.
-  /// Para posts: substitui imageBase64 pelo ponteiro 'idb:<id>' antes de salvar.
-  Future<void> _save(String key, List items) async {
-    try {
-      List<Map<String, dynamic>> jsonList;
-      if (key == _kPosts) {
-        // Salva posts sem as imagens grandes — usa referência 'idb:<id>'
-        jsonList = (items as List<Post>).map((p) {
-          final map = p.toJson();
-          // Se a imageBase64 é uma imagem real (não demo e não já é ponteiro)
-          if (!map['imageBase64'].toString().startsWith('demo:') &&
-              !map['imageBase64'].toString().startsWith('idb:') &&
-              map['imageBase64'].toString().length > 100) {
-            map['imageBase64'] = 'idb:${p.id}';
-          }
-          return map;
-        }).toList();
-      } else if (key == _kUsers) {
-        // Salva usuários sem avatars grandes
-        jsonList = (items as List<AppUser>).map((u) {
-          final map = u.toJson();
-          if ((map['avatarBase64'] ?? '').toString().length > 100) {
-            map['avatarBase64'] = 'idb:avatar_${u.id}';
-          }
-          return map;
-        }).toList();
-      } else {
-        jsonList = items.map((e) => e.toJson() as Map<String, dynamic>).toList();
+      final doc = await _db.collection('users').doc(uid).get();
+      if (doc.exists) {
+        _currentUser = AppUser.fromJson({...doc.data()!, 'id': doc.id});
       }
-      final json = jsonEncode(jsonList);
-      await _prefs?.setString(key, json);
     } catch (e) {
-      if (kDebugMode) debugPrint('_save erro [$key]: $e');
+      if (kDebugMode) debugPrint('[DB] _loadCurrentUser erro: $e');
     }
+  }
+
+  Future<void> _loadAllData() async {
+    await Future.wait([
+      _loadUsers(),
+      _loadPosts(),
+      _loadPins(),
+      _loadComments(),
+      _loadFollows(),
+      _loadNotifications(),
+    ]);
+  }
+
+  Future<void> _loadUsers() async {
+    try {
+      final snap = await _db.collection('users').get();
+      _users = snap.docs.map((d) => AppUser.fromJson({...d.data(), 'id': d.id})).toList();
+    } catch (e) { if (kDebugMode) debugPrint('[DB] _loadUsers: $e'); }
+  }
+
+  Future<void> _loadPosts() async {
+    try {
+      final snap = await _db.collection('posts').orderBy('createdAt', descending: true).get();
+      _posts = snap.docs.map((d) => Post.fromJson({...d.data(), 'id': d.id})).toList();
+    } catch (e) { if (kDebugMode) debugPrint('[DB] _loadPosts: $e'); }
+  }
+
+  Future<void> _loadPins() async {
+    try {
+      final snap = await _db.collection('pins').get();
+      _pins = snap.docs.map((d) => Pin.fromJson({...d.data(), 'id': d.id})).toList();
+    } catch (e) { if (kDebugMode) debugPrint('[DB] _loadPins: $e'); }
+  }
+
+  Future<void> _loadComments() async {
+    try {
+      final snap = await _db.collection('comments').get();
+      _comments = snap.docs.map((d) => PostComment.fromJson({...d.data(), 'id': d.id})).toList();
+    } catch (e) { if (kDebugMode) debugPrint('[DB] _loadComments: $e'); }
+  }
+
+  Future<void> _loadFollows() async {
+    try {
+      final snap = await _db.collection('follows').get();
+      _follows = snap.docs.map((d) => Follow.fromJson(d.data())).toList();
+    } catch (e) { if (kDebugMode) debugPrint('[DB] _loadFollows: $e'); }
+  }
+
+  Future<void> _loadNotifications() async {
+    if (_currentUser == null) return;
+    try {
+      final snap = await _db.collection('notifications')
+          .where('recipientId', isEqualTo: _currentUser!.id)
+          .get();
+      _notifications = snap.docs
+          .map((d) => AppNotification.fromJson({...d.data(), 'id': d.id}))
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    } catch (e) { if (kDebugMode) debugPrint('[DB] _loadNotifications: $e'); }
   }
 
   // ── AUTH ────────────────────────────────────────────────────────────────────
-  String _hash(String s) => base64Encode(utf8.encode(s));
-
   Future<String?> signup({
     required String name,
     required String email,
     required String password,
   }) async {
-    if (_users.any((u) => u.email.toLowerCase() == email.toLowerCase())) {
-      return 'E-mail já cadastrado.';
+    try {
+      final cred = await _auth.createUserWithEmailAndPassword(
+        email: email, password: password,
+      );
+      final uid = cred.user!.uid;
+      final user = AppUser(
+        id: uid, name: name, email: email,
+        passwordHash: '', createdAt: DateTime.now(),
+      );
+      await _db.collection('users').doc(uid).set(user.toFirestore());
+      _currentUser = user;
+      _users.add(user);
+      await _loadAllData();
+      notifyListeners();
+      return null;
+    } on FirebaseAuthException catch (e) {
+      return _authError(e.code);
+    } catch (e) {
+      return 'Erro ao criar conta: $e';
     }
-    if (password.length < 6) return 'Senha deve ter pelo menos 6 caracteres.';
-    final user = AppUser(
-      id: _uuid.v4(), name: name, email: email,
-      passwordHash: _hash(password),
-      createdAt: DateTime.now(),
-    );
-    _users.add(user);
-    await _save(_kUsers, _users);
-    _currentUser = user;
-    await _prefs?.setString(_kCurrentUser, user.id);
-    notifyListeners();
-    return null;
   }
 
   Future<String?> login({required String email, required String password}) async {
     try {
-      final user = _users.firstWhere(
-        (u) => u.email.toLowerCase() == email.toLowerCase(),
+      final cred = await _auth.signInWithEmailAndPassword(
+        email: email, password: password,
       );
-      if (user.passwordHash != _hash(password)) return 'Senha incorreta.';
-      _currentUser = user;
-      await _prefs?.setString(_kCurrentUser, user.id);
-      // Carregar avatar do IndexedDB se necessário
-      final av = _currentUser!.avatarBase64;
-      if (av != null && av.startsWith('idb:')) {
-        final key = av.substring(4);
-        final b64 = await ImageStorage.loadBase64(key);
-        if (b64 != null) _currentUser!.avatarBase64 = b64;
-      }
+      await _loadCurrentUser(cred.user!.uid);
+      await _loadAllData();
       notifyListeners();
       return null;
-    } catch (_) {
-      return 'E-mail não encontrado.';
+    } on FirebaseAuthException catch (e) {
+      return _authError(e.code);
+    } catch (e) {
+      return 'Erro ao fazer login: $e';
     }
   }
 
   Future<void> logout() async {
+    await _auth.signOut();
     _currentUser = null;
-    await _prefs?.remove(_kCurrentUser);
+    _posts = []; _pins = []; _comments = [];
+    _notifications = []; _follows = []; _users = [];
     notifyListeners();
+  }
+
+  String _authError(String code) {
+    switch (code) {
+      case 'email-already-in-use': return 'E-mail já cadastrado.';
+      case 'invalid-email':        return 'E-mail inválido.';
+      case 'weak-password':        return 'Senha muito fraca (mínimo 6 caracteres).';
+      case 'user-not-found':       return 'E-mail não encontrado.';
+      case 'wrong-password':       return 'Senha incorreta.';
+      case 'invalid-credential':   return 'E-mail ou senha incorretos.';
+      case 'too-many-requests':    return 'Muitas tentativas. Tente mais tarde.';
+      default:                     return 'Erro de autenticação ($code).';
+    }
   }
 
   // ── USER ────────────────────────────────────────────────────────────────────
@@ -196,29 +207,59 @@ class DatabaseService extends ChangeNotifier {
     Uint8List? avatarBytes,
   }) async {
     if (_currentUser == null) return;
-    if (name != null)            { _currentUser!.name = name; }
-    if (bio != null)             { _currentUser!.bio = bio; }
-    if (allowPublicPins != null) { _currentUser!.allowPublicPinsOnMyPosts = allowPublicPins; }
-    if (avatarBytes != null) {
-      final b64 = base64Encode(avatarBytes);
-      _currentUser!.avatarBase64 = b64;
-      // Salva avatar no IndexedDB
-      await ImageStorage.saveBase64('avatar_${_currentUser!.id}', b64);
+    final updates = <String, dynamic>{};
+    if (name != null)            { _currentUser!.name = name;   updates['name'] = name; }
+    if (bio != null)             { _currentUser!.bio = bio;     updates['bio'] = bio; }
+    if (allowPublicPins != null) {
+      _currentUser!.allowPublicPinsOnMyPosts = allowPublicPins;
+      updates['allowPublicPinsOnMyPosts'] = allowPublicPins;
     }
-
+    if (avatarBytes != null) {
+      // Upload avatar para Firebase Storage
+      final url = await _uploadImage(
+        'avatars/${_currentUser!.id}.jpg', avatarBytes,
+      );
+      if (url != null) {
+        _currentUser!.avatarBase64 = url;
+        updates['avatarUrl'] = url;
+      }
+    }
+    if (updates.isNotEmpty) {
+      await _db.collection('users').doc(_currentUser!.id).update(updates);
+    }
     final idx = _users.indexWhere((u) => u.id == _currentUser!.id);
     if (idx != -1) _users[idx] = _currentUser!;
-    await _save(_kUsers, _users);
 
-    // Propagar nome/avatar para posts
+    // Propagar nome/avatar nos posts
     if (name != null || avatarBytes != null) {
+      final batch = _db.batch();
       for (final p in _posts.where((p) => p.ownerId == _currentUser!.id)) {
         if (name != null) p.ownerName = name;
-        if (avatarBytes != null) p.ownerAvatarBase64 = _currentUser!.avatarBase64;
+        if (avatarBytes != null) p.ownerAvatarBase64 = _currentUser!.avatarBase64 ?? '';
+        batch.update(_db.collection('posts').doc(p.id), {
+          if (name != null) 'ownerName': name,
+          if (avatarBytes != null) 'ownerAvatarBase64': _currentUser!.avatarBase64,
+        });
       }
-      await _save(_kPosts, _posts);
+      await batch.commit();
     }
     notifyListeners();
+  }
+
+  // ── UPLOAD IMAGEM (Firebase Storage) ─────────────────────────────────────────
+  Future<String?> _uploadImage(String path, Uint8List bytes) async {
+    try {
+      final ref = _storage.ref().child(path);
+      final task = await ref.putData(
+        bytes,
+        SettableMetadata(contentType: 'image/jpeg'),
+      );
+      return await task.ref.getDownloadURL();
+    } catch (e) {
+      if (kDebugMode) debugPrint('[DB] _uploadImage erro: $e');
+      // Fallback: salvar como base64 se Storage falhar
+      return 'data:image/jpeg;base64,${base64Encode(bytes)}';
+    }
   }
 
   // ── FOLLOWS ──────────────────────────────────────────────────────────────────
@@ -236,20 +277,22 @@ class DatabaseService extends ChangeNotifier {
 
   Future<void> toggleFollow(String targetId) async {
     final myId = _currentUser!.id;
+    final docId = '${myId}_$targetId';
     final existing = _follows.indexWhere(
         (f) => f.followerId == myId && f.followingId == targetId);
     if (existing != -1) {
       _follows.removeAt(existing);
+      await _db.collection('follows').doc(docId).delete();
     } else {
-      _follows.add(Follow(
-          followerId: myId, followingId: targetId, createdAt: DateTime.now()));
+      final follow = Follow(followerId: myId, followingId: targetId, createdAt: DateTime.now());
+      _follows.add(follow);
+      await _db.collection('follows').doc(docId).set(follow.toJson());
       _addNotification(
         recipientId: targetId,
         type: NotifType.newFollower,
         body: '${_currentUser!.name} começou a seguir você.',
       );
     }
-    await _save(_kFollows, _follows);
     notifyListeners();
   }
 
@@ -259,24 +302,21 @@ class DatabaseService extends ChangeNotifier {
     required String caption,
   }) async {
     final pid = _uuid.v4();
-    final imgB64 = base64Encode(imageBytes);
 
-    // Salva imagem no IndexedDB (sem limite de tamanho)
-    await ImageStorage.saveBase64(pid, imgB64);
+    // Upload da imagem para Firebase Storage
+    final imageUrl = await _uploadImage('posts/$pid.jpg', imageBytes);
 
     final post = Post(
       id: pid,
       ownerId: _currentUser!.id,
       ownerName: _currentUser!.name,
-      ownerAvatarBase64: _currentUser!.avatarBase64,
-      imageBase64: imgB64,   // na memória fica o base64 completo
+      ownerAvatarBase64: _currentUser!.avatarBase64 ?? '',
+      imageBase64: imageUrl ?? '',
       caption: caption,
       createdAt: DateTime.now(),
     );
+    await _db.collection('posts').doc(pid).set(post.toFirestore());
     _posts.insert(0, post);
-
-    // No SharedPreferences salva o ponteiro 'idb:<pid>' (pouco espaço)
-    await _save(_kPosts, _posts);
     notifyListeners();
     return post;
   }
@@ -285,10 +325,16 @@ class DatabaseService extends ChangeNotifier {
     _posts.removeWhere((p) => p.id == postId);
     _pins.removeWhere((p) => p.postId == postId);
     _comments.removeWhere((c) => c.postId == postId);
-    await ImageStorage.delete(postId);   // remove imagem do IndexedDB
-    await _save(_kPosts, _posts);
-    await _save(_kPins, _pins);
-    await _save(_kComments, _comments);
+    final batch = _db.batch();
+    batch.delete(_db.collection('posts').doc(postId));
+    // Deletar pins e comentários do post
+    final pinsSnap = await _db.collection('pins').where('postId', isEqualTo: postId).get();
+    for (final d in pinsSnap.docs) batch.delete(d.reference);
+    final commSnap = await _db.collection('comments').where('postId', isEqualTo: postId).get();
+    for (final d in commSnap.docs) batch.delete(d.reference);
+    await batch.commit();
+    // Tentar deletar imagem do Storage
+    try { await _storage.ref('posts/$postId.jpg').delete(); } catch (_) {}
     notifyListeners();
   }
 
@@ -296,7 +342,7 @@ class DatabaseService extends ChangeNotifier {
     final idx = _posts.indexWhere((p) => p.id == postId);
     if (idx == -1) return;
     _posts[idx].allowPublicPinsOverride = allowPublic;
-    await _save(_kPosts, _posts);
+    await _db.collection('posts').doc(postId).update({'allowPublicPinsOverride': allowPublic});
     notifyListeners();
   }
 
@@ -372,10 +418,11 @@ class DatabaseService extends ChangeNotifier {
     }
     if (targetLabel.trim().isEmpty) return 'Informe um título/alvo para o pin.';
 
+    final pinId = _uuid.v4();
     final pin = Pin(
-      id: _uuid.v4(), postId: postId,
+      id: pinId, postId: postId,
       authorId: uid, authorName: _currentUser!.name,
-      authorAvatarBase64: _currentUser!.avatarBase64,
+      authorAvatarBase64: _currentUser!.avatarBase64 ?? '',
       xPercent: xPercent, yPercent: yPercent,
       targetLabel: targetLabel.trim(),
       score: score.clamp(0.0, 10.0),
@@ -383,7 +430,7 @@ class DatabaseService extends ChangeNotifier {
       createdAt: DateTime.now(), updatedAt: DateTime.now(),
     );
     _pins.add(pin);
-    await _save(_kPins, _pins);
+    await _db.collection('pins').doc(pinId).set(pin.toFirestore());
     await _recalculatePost(postId);
 
     final post = getPostById(postId);
@@ -407,13 +454,15 @@ class DatabaseService extends ChangeNotifier {
     if (idx == -1) return 'Pin não encontrado.';
     if (_pins[idx].authorId != _currentUser!.id) return 'Sem permissão.';
 
-    if (targetLabel != null) _pins[idx].targetLabel = targetLabel.trim();
-    if (score != null)       _pins[idx].score = score.clamp(0.0, 10.0);
-    if (comment != null)     _pins[idx].comment = comment;
-    if (isPublic != null)    _pins[idx].isPublic = isPublic;
+    final updates = <String, dynamic>{};
+    if (targetLabel != null) { _pins[idx].targetLabel = targetLabel.trim(); updates['targetLabel'] = targetLabel.trim(); }
+    if (score != null)       { _pins[idx].score = score.clamp(0.0, 10.0);  updates['score'] = score.clamp(0.0, 10.0); }
+    if (comment != null)     { _pins[idx].comment = comment;                updates['comment'] = comment; }
+    if (isPublic != null)    { _pins[idx].isPublic = isPublic;              updates['isPublic'] = isPublic; }
     _pins[idx].updatedAt = DateTime.now();
+    updates['updatedAt'] = _pins[idx].updatedAt.toIso8601String();
 
-    await _save(_kPins, _pins);
+    await _db.collection('pins').doc(pinId).update(updates);
     await _recalculatePost(_pins[idx].postId);
     notifyListeners();
     return null;
@@ -424,7 +473,7 @@ class DatabaseService extends ChangeNotifier {
     if (idx == -1) return;
     final postId = _pins[idx].postId;
     _pins[idx].isDeleted = true;
-    await _save(_kPins, _pins);
+    await _db.collection('pins').doc(pinId).update({'isDeleted': true});
     await _recalculatePost(postId);
     notifyListeners();
   }
@@ -439,7 +488,11 @@ class DatabaseService extends ChangeNotifier {
     _posts[idx].notaMedia        = double.parse(media.toStringAsFixed(1));
     _posts[idx].totalPins        = total;
     _posts[idx].totalAvaliadores = active.map((p) => p.authorId).toSet().length;
-    await _save(_kPosts, _posts);
+    await _db.collection('posts').doc(postId).update({
+      'notaMedia':        _posts[idx].notaMedia,
+      'totalPins':        total,
+      'totalAvaliadores': _posts[idx].totalAvaliadores,
+    });
   }
 
   // ── COMMENTS ─────────────────────────────────────────────────────────────────
@@ -452,22 +505,22 @@ class DatabaseService extends ChangeNotifier {
 
   Future<String?> addComment(String postId, String text) async {
     if (text.trim().isEmpty) return 'Comentário não pode ser vazio.';
+    final cid = _uuid.v4();
     final comment = PostComment(
-      id: _uuid.v4(), postId: postId,
+      id: cid, postId: postId,
       authorId: _currentUser!.id, authorName: _currentUser!.name,
-      authorAvatarBase64: _currentUser!.avatarBase64,
+      authorAvatarBase64: _currentUser!.avatarBase64 ?? '',
       text: text.trim(), createdAt: DateTime.now(),
     );
     _comments.add(comment);
-
     final pIdx = _posts.indexWhere((p) => p.id == postId);
     if (pIdx != -1) {
       _posts[pIdx].totalComments =
           _comments.where((c) => c.postId == postId && !c.isDeleted).length;
+      await _db.collection('posts').doc(postId).update(
+          {'totalComments': _posts[pIdx].totalComments});
     }
-    await _save(_kComments, _comments);
-    await _save(_kPosts, _posts);
-
+    await _db.collection('comments').doc(cid).set(comment.toFirestore());
     final post = getPostById(postId);
     if (post != null && post.ownerId != _currentUser!.id) {
       _addNotification(
@@ -490,9 +543,10 @@ class DatabaseService extends ChangeNotifier {
     if (pIdx != -1) {
       _posts[pIdx].totalComments =
           _comments.where((c) => c.postId == postId && !c.isDeleted).length;
+      await _db.collection('posts').doc(postId).update(
+          {'totalComments': _posts[pIdx].totalComments});
     }
-    await _save(_kComments, _comments);
-    await _save(_kPosts, _posts);
+    await _db.collection('comments').doc(commentId).update({'isDeleted': true});
     notifyListeners();
   }
 
@@ -511,10 +565,11 @@ class DatabaseService extends ChangeNotifier {
     String? postId,
     String? pinId,
   }) {
+    final nid = _uuid.v4();
     final notif = AppNotification(
-      id: _uuid.v4(), recipientId: recipientId,
+      id: nid, recipientId: recipientId,
       actorId: _currentUser!.id, actorName: _currentUser!.name,
-      actorAvatarBase64: _currentUser!.avatarBase64,
+      actorAvatarBase64: _currentUser!.avatarBase64 ?? '',
       type: type, postId: postId, pinId: pinId,
       body: body, createdAt: DateTime.now(),
     );
@@ -522,77 +577,32 @@ class DatabaseService extends ChangeNotifier {
     if (_notifications.length > 100) {
       _notifications = _notifications.take(100).toList();
     }
-    _save(_kNotifications, _notifications);
+    _db.collection('notifications').doc(nid).set(notif.toFirestore());
+    notifyListeners();
   }
 
   Future<void> markAllNotificationsRead() async {
-    for (final n in _notifications) { n.isRead = true; }
-    await _save(_kNotifications, _notifications);
+    final batch = _db.batch();
+    for (final n in _notifications.where((n) => !n.isRead)) {
+      n.isRead = true;
+      batch.update(_db.collection('notifications').doc(n.id), {'isRead': true});
+    }
+    await batch.commit();
     notifyListeners();
   }
 
   Future<void> markNotificationRead(String id) async {
     final idx = _notifications.indexWhere((n) => n.id == id);
-    if (idx != -1) _notifications[idx].isRead = true;
-    await _save(_kNotifications, _notifications);
+    if (idx != -1) {
+      _notifications[idx].isRead = true;
+      await _db.collection('notifications').doc(id).update({'isRead': true});
+    }
     notifyListeners();
   }
 
-  // ── DEMO DATA ─────────────────────────────────────────────────────────────────
-  Future<void> _seedDemoData() async {
-    final u1 = AppUser(id: 'demo-1', name: 'Ana Silva',    email: 'ana@demo.com',     passwordHash: _hash('123456'), createdAt: DateTime.now().subtract(const Duration(days: 30)));
-    final u2 = AppUser(id: 'demo-2', name: 'Pedro Costa',  email: 'pedro@demo.com',   passwordHash: _hash('123456'), createdAt: DateTime.now().subtract(const Duration(days: 20)));
-    final u3 = AppUser(id: 'demo-3', name: 'Mariana Lima', email: 'mariana@demo.com', passwordHash: _hash('123456'), createdAt: DateTime.now().subtract(const Duration(days: 10)));
-    _users = [u1, u2, u3];
-
-    _follows = [
-      Follow(followerId: 'demo-1', followingId: 'demo-2', createdAt: DateTime.now()),
-      Follow(followerId: 'demo-2', followingId: 'demo-1', createdAt: DateTime.now()),
-      Follow(followerId: 'demo-3', followingId: 'demo-1', createdAt: DateTime.now()),
-    ];
-
-    // Posts de demo usam imageBase64 com prefixo 'demo:' (renderizados como gradiente)
-    final p1 = Post(id: 'post-1', ownerId: 'demo-1', ownerName: 'Ana Silva',
-        imageBase64: 'demo:7C3AED:EC4899:1', caption: 'Meu look favorito ✨',
-        createdAt: DateTime.now().subtract(const Duration(hours: 5)),
-        notaMedia: 8.6, totalPins: 6, totalAvaliadores: 2, totalComments: 2);
-    final p2 = Post(id: 'post-2', ownerId: 'demo-2', ownerName: 'Pedro Costa',
-        imageBase64: 'demo:10B981:3B82F6:2', caption: 'Treino concluído 💪',
-        createdAt: DateTime.now().subtract(const Duration(hours: 12)),
-        notaMedia: 7.8, totalPins: 6, totalAvaliadores: 2, totalComments: 1);
-    final p3 = Post(id: 'post-3', ownerId: 'demo-3', ownerName: 'Mariana Lima',
-        imageBase64: 'demo:F59E0B:EF4444:3', caption: 'Pôr do sol incrível 🌅',
-        createdAt: DateTime.now().subtract(const Duration(days: 1)),
-        notaMedia: 9.0, totalPins: 6, totalAvaliadores: 3, totalComments: 3);
-    final p4 = Post(id: 'post-4', ownerId: 'demo-1', ownerName: 'Ana Silva',
-        imageBase64: 'demo:EC4899:F59E0B:4', caption: 'Novo corte 💇‍♀️',
-        createdAt: DateTime.now().subtract(const Duration(days: 2)),
-        notaMedia: 6.0, totalPins: 5, totalAvaliadores: 2, totalComments: 0);
-    _posts = [p1, p2, p3, p4];
-
-    _pins = [
-      Pin(id: 'pin-1', postId: 'post-1', authorId: 'demo-2', authorName: 'Pedro Costa', xPercent: 30, yPercent: 25, targetLabel: 'Cabelo', score: 9.0, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
-      Pin(id: 'pin-2', postId: 'post-1', authorId: 'demo-2', authorName: 'Pedro Costa', xPercent: 50, yPercent: 50, targetLabel: 'Roupa', score: 8.5, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
-      Pin(id: 'pin-3', postId: 'post-1', authorId: 'demo-3', authorName: 'Mariana Lima', xPercent: 45, yPercent: 30, targetLabel: 'Expressão', score: 9.0, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
-      Pin(id: 'pin-4', postId: 'post-2', authorId: 'demo-1', authorName: 'Ana Silva', xPercent: 50, yPercent: 40, targetLabel: 'Postura', score: 8.0, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
-      Pin(id: 'pin-5', postId: 'post-3', authorId: 'demo-1', authorName: 'Ana Silva', xPercent: 60, yPercent: 30, targetLabel: 'Céu', score: 9.5, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
-      Pin(id: 'pin-6', postId: 'post-3', authorId: 'demo-2', authorName: 'Pedro Costa', xPercent: 40, yPercent: 60, targetLabel: 'Horizonte', score: 9.0, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
-      Pin(id: 'pin-7', postId: 'post-3', authorId: 'demo-3', authorName: 'Mariana Lima', xPercent: 50, yPercent: 50, targetLabel: 'Composição', score: 8.5, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
-    ];
-
-    _comments = [
-      PostComment(id: 'c-1', postId: 'post-1', authorId: 'demo-2', authorName: 'Pedro Costa', text: 'Ficou incrível! 😍', createdAt: DateTime.now()),
-      PostComment(id: 'c-2', postId: 'post-1', authorId: 'demo-3', authorName: 'Mariana Lima', text: 'Arrasou!', createdAt: DateTime.now()),
-      PostComment(id: 'c-3', postId: 'post-2', authorId: 'demo-1', authorName: 'Ana Silva', text: 'Top demais! 💪', createdAt: DateTime.now()),
-      PostComment(id: 'c-4', postId: 'post-3', authorId: 'demo-1', authorName: 'Ana Silva', text: 'Que foto linda!', createdAt: DateTime.now()),
-      PostComment(id: 'c-5', postId: 'post-3', authorId: 'demo-2', authorName: 'Pedro Costa', text: 'Perfeita ✨', createdAt: DateTime.now()),
-      PostComment(id: 'c-6', postId: 'post-3', authorId: 'demo-3', authorName: 'Mariana Lima', text: 'Meu pôr do sol favorito!', createdAt: DateTime.now()),
-    ];
-
-    await _save(_kUsers, _users);
-    await _save(_kPosts, _posts);
-    await _save(_kPins, _pins);
-    await _save(_kComments, _comments);
-    await _save(_kFollows, _follows);
+  // ── REFRESH ───────────────────────────────────────────────────────────────────
+  Future<void> refresh() async {
+    await _loadAllData();
+    notifyListeners();
   }
 }
