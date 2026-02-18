@@ -20,7 +20,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions web = FirebaseOptions(
     apiKey: 'AIzaSyBy_5Kkopj7XHdhEeF6xJdU7SFkR-nwFBs',
-    appId: '1:641618795234:web:rateme-web-app',
+    appId: '1:641618795234:web:79bc6e9ed4ac8e6d12dcbb',
     messagingSenderId: '641618795234',
     projectId: 'rateme-a1de6',
     authDomain: 'rateme-a1de6.firebaseapp.com',
@@ -37,7 +37,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyBy_5Kkopj7XHdhEeF6xJdU7SFkR-nwFBs',
-    appId: '1:641618795234:ios:rateme-ios-app',
+    appId: '1:641618795234:android:b3182f5a24028df412dcbb',
     messagingSenderId: '641618795234',
     projectId: 'rateme-a1de6',
     storageBucket: 'rateme-a1de6.firebasestorage.app',
