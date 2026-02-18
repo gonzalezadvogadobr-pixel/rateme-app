@@ -44,7 +44,6 @@ class RateMeApp extends StatelessWidget {
   }
 }
 
-/// Gerencia o roteamento autenticado/não-autenticado com animação
 class _AppGate extends StatelessWidget {
   const _AppGate();
 
@@ -52,9 +51,7 @@ class _AppGate extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<DatabaseService>(
       builder: (context, db, _) {
-        if (!db.isLoggedIn) {
-          return const AuthScreen();
-        }
+        if (!db.isLoggedIn) return const AuthScreen();
         return const HomeScreen();
       },
     );

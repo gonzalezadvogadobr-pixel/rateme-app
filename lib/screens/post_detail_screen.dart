@@ -15,8 +15,23 @@ class PostDetailScreen extends StatefulWidget {
 
 class _PostDetailScreenState extends State<PostDetailScreen> {
   bool _pinMode = false;
+  bool _pinsVisible = true;
   Pin? _selectedPin;
   final GlobalKey _imageKey = GlobalKey();
+  // Zoom
+  final TransformationController _zoomCtrl = TransformationController();
+  bool _isZoomed = false;
+
+  @override
+  void dispose() {
+    _zoomCtrl.dispose();
+    super.dispose();
+  }
+
+  void _resetZoom() {
+    _zoomCtrl.value = Matrix4.identity();
+    setState(() => _isZoomed = false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,7 +92,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               _buildPostInfo(post, visiblePins, isOwner, db, myPinCount),
               // ── Lista de pins visíveis ────────────────────────────────────
               _buildPinsList(context, db, visiblePins, post),
-              const SizedBox(height: 80),
+              // ── Comentários ──────────────────────────────────────────────
+              _CommentsSection(postId: post.id),
+              const SizedBox(height: 100),
             ],
           ),
         ),
@@ -110,38 +127,58 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     return Container(
       color: AppTheme.bgSecondary,
       child: AspectRatio(
-        aspectRatio: 4 / 3,
+        aspectRatio: 4 / 6,
         child: LayoutBuilder(builder: (ctx, constraints) {
           return GestureDetector(
-            onTapUp: _pinMode && canAddPin
-                ? (details) {
-                    final box =
-                        ctx.findRenderObject() as RenderBox?;
-                    if (box == null) return;
-                    final localPos = box.globalToLocal(
-                        details.globalPosition);
-                    final xPct =
-                        (localPos.dx / constraints.maxWidth) * 100;
-                    final yPct =
-                        (localPos.dy / constraints.maxHeight) * 100;
-                    setState(() => _pinMode = false);
-                    _showCreatePinModal(
-                      context,
-                      db,
-                      post.id,
-                      xPct.clamp(0, 100),
-                      yPct.clamp(0, 100),
-                    );
-                  }
-                : null,
+            onTapUp: _isZoomed
+                ? (_) => _resetZoom()   // toque quando com zoom → volta
+                : (details) {
+                    if (_pinMode && canAddPin) {
+                      final box = ctx.findRenderObject() as RenderBox?;
+                      if (box == null) return;
+                      final localPos =
+                          box.globalToLocal(details.globalPosition);
+                      final xPct =
+                          (localPos.dx / constraints.maxWidth) * 100;
+                      final yPct =
+                          (localPos.dy / constraints.maxHeight) * 100;
+                      setState(() => _pinMode = false);
+                      _showCreatePinModal(
+                        context,
+                        db,
+                        post.id,
+                        xPct.clamp(0, 100),
+                        yPct.clamp(0, 100),
+                      );
+                    } else if (!_pinMode) {
+                      setState(() {
+                        _pinsVisible = !_pinsVisible;
+                        if (!_pinsVisible) _selectedPin = null;
+                      });
+                    }
+                  },
             child: Stack(
               children: [
-                // Imagem
-                SizedBox.expand(
-                  child: AppImage(
-                    imageData: post.imageBase64,
-                    fit: BoxFit.cover,
-                    key: _imageKey,
+                // Imagem com zoom
+                InteractiveViewer(
+                  transformationController: _zoomCtrl,
+                  minScale: 1.0,
+                  maxScale: 4.0,
+                  panEnabled: _isZoomed,
+                  onInteractionEnd: (details) {
+                    final scale = _zoomCtrl.value.getMaxScaleOnAxis();
+                    if (scale <= 1.05) {
+                      _resetZoom();
+                    } else {
+                      setState(() => _isZoomed = true);
+                    }
+                  },
+                  child: SizedBox.expand(
+                    child: AppImage(
+                      imageData: post.imageBase64,
+                      fit: BoxFit.cover,
+                      key: _imageKey,
+                    ),
                   ),
                 ),
                 // Overlay modo pin
@@ -161,10 +198,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                               color: Colors.white,
                               fontWeight: FontWeight.w600,
                               shadows: [
-                                Shadow(
-                                  blurRadius: 4,
-                                  color: Colors.black,
-                                )
+                                Shadow(blurRadius: 4, color: Colors.black),
                               ],
                             ),
                           ),
@@ -172,23 +206,110 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       ),
                     ),
                   ),
-                // Pins visíveis
-                ...visiblePins.map((pin) => Positioned(
-                      left: (pin.xPercent / 100) * constraints.maxWidth - 18,
-                      top: (pin.yPercent / 100) * constraints.maxHeight - 18,
-                      child: PinMarker(
-                        label: pin.targetLabel,
-                        score: pin.score,
-                        isSelected: _selectedPin?.id == pin.id,
-                        isOwn: pin.authorId == db.currentUser?.id,
-                        onTap: () => setState(() {
-                          _selectedPin =
-                              _selectedPin?.id == pin.id ? null : pin;
-                        }),
+                // Indicador de zoom ativo
+                if (_isZoomed)
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.zoom_out_rounded,
+                                size: 12, color: Colors.white),
+                            SizedBox(width: 4),
+                            Text('Toque para voltar',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
                       ),
-                    )),
+                    ),
+                  ),
+                // Indicador de pins ocultos (pequeno ícone no canto)
+                if (!_pinsVisible && visiblePins.isNotEmpty && !_pinMode)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.push_pin_outlined,
+                              size: 12, color: Colors.white),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${visiblePins.length} pins ocultos',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                // Hint de toque (apenas quando há pins, primeira vez)
+                if (_pinsVisible && visiblePins.isNotEmpty && !_pinMode)
+                  Positioned(
+                    bottom: _selectedPin != null ? 80 : 8,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: IgnorePointer(
+                        child: AnimatedOpacity(
+                          duration: const Duration(milliseconds: 300),
+                          opacity: 0.7,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Text(
+                              'Toque para ocultar pins',
+                              style: TextStyle(
+                                  color: Colors.white, fontSize: 10),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                // Pins visíveis (animados com fade)
+                if (_pinsVisible)
+                  ...visiblePins.map((pin) => Positioned(
+                        left: (pin.xPercent / 100) * constraints.maxWidth - 18,
+                        top: (pin.yPercent / 100) * constraints.maxHeight - 18,
+                        child: PinMarker(
+                          label: pin.targetLabel,
+                          score: pin.score,
+                          isSelected: _selectedPin?.id == pin.id,
+                          isOwn: pin.authorId == db.currentUser?.id,
+                          onTap: () => setState(() {
+                            _selectedPin =
+                                _selectedPin?.id == pin.id ? null : pin;
+                          }),
+                        ),
+                      )),
                 // Tooltip do pin selecionado
-                if (_selectedPin != null)
+                if (_selectedPin != null && _pinsVisible)
                   Positioned(
                     bottom: 8,
                     left: 8,
@@ -197,8 +318,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       pin: _selectedPin!,
                       db: db,
                       onClose: () => setState(() => _selectedPin = null),
-                      onEdit: () => _showEditPinModal(
-                          context, db, _selectedPin!),
+                      onEdit: () =>
+                          _showEditPinModal(context, db, _selectedPin!),
                       onDelete: () async {
                         await db.deletePin(_selectedPin!.id);
                         setState(() => _selectedPin = null);
@@ -1081,6 +1202,233 @@ class _PrivacySettingsDialogState extends State<_PrivacySettingsDialog> {
           child: const Text('Salvar'),
         ),
       ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SEÇÃO DE COMENTÁRIOS GERAIS
+// ═══════════════════════════════════════════════════════════════════════════════
+class _CommentsSection extends StatefulWidget {
+  final String postId;
+  const _CommentsSection({required this.postId});
+
+  @override
+  State<_CommentsSection> createState() => _CommentsSectionState();
+}
+
+class _CommentsSectionState extends State<_CommentsSection> {
+  final _ctrl = TextEditingController();
+  bool _sending = false;
+  bool _expanded = false;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send(DatabaseService db) async {
+    if (_ctrl.text.trim().isEmpty) return;
+    setState(() => _sending = true);
+    await db.addComment(widget.postId, _ctrl.text.trim());
+    _ctrl.clear();
+    if (mounted) setState(() => _sending = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<DatabaseService>(builder: (context, db, _) {
+      final comments = db.getCommentsForPost(widget.postId);
+      final shown    = _expanded ? comments : comments.take(3).toList();
+
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Divider(color: AppTheme.bgSurface, height: 24),
+            Row(
+              children: [
+                const Icon(Icons.chat_bubble_outline_rounded,
+                    size: 18, color: AppTheme.purpleLight),
+                const SizedBox(width: 8),
+                Text(
+                  'Comentários (${comments.length})',
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (comments.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Nenhum comentário ainda. Seja o primeiro! 💬',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                ),
+              )
+            else ...[
+              ...shown.map((c) => _CommentItem(
+                    comment: c,
+                    db: db,
+                    onDelete: () => db.deleteComment(c.id),
+                  )),
+              if (comments.length > 3)
+                TextButton(
+                  onPressed: () => setState(() => _expanded = !_expanded),
+                  child: Text(
+                    _expanded
+                        ? 'Mostrar menos'
+                        : 'Ver todos os ${comments.length} comentários',
+                    style: const TextStyle(color: AppTheme.purpleLight),
+                  ),
+                ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                UserAvatar(
+                  avatarBase64: db.currentUser?.avatarBase64,
+                  name: db.currentUser?.name ?? '?',
+                  size: 34,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _ctrl,
+                    maxLines: null,
+                    style: const TextStyle(
+                        color: AppTheme.textPrimary, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: 'Adicionar comentário…',
+                      hintStyle: const TextStyle(
+                          color: AppTheme.textMuted, fontSize: 13),
+                      filled: true,
+                      fillColor: AppTheme.bgSurface,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide.none,
+                      ),
+                      suffixIcon: _sending
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: Padding(
+                                padding: EdgeInsets.all(10),
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppTheme.purple),
+                              ),
+                            )
+                          : IconButton(
+                              icon: const Icon(Icons.send_rounded,
+                                  color: AppTheme.purpleLight, size: 20),
+                              onPressed: () => _send(db),
+                            ),
+                    ),
+                    onSubmitted: (_) => _send(db),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      );
+    });
+  }
+}
+
+class _CommentItem extends StatelessWidget {
+  final PostComment comment;
+  final DatabaseService db;
+  final VoidCallback onDelete;
+
+  const _CommentItem({
+    required this.comment,
+    required this.db,
+    required this.onDelete,
+  });
+
+  String _timeAgo(DateTime dt) {
+    final d = DateTime.now().difference(dt);
+    if (d.inSeconds < 60) return 'agora';
+    if (d.inMinutes < 60) return '${d.inMinutes}min';
+    if (d.inHours < 24)   return '${d.inHours}h';
+    return '${d.inDays}d';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isOwn = comment.authorId == db.currentUser?.id;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          UserAvatar(
+            name: comment.authorName,
+            size: 30,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.bgSurface,
+                borderRadius: BorderRadius.circular(12),
+                border: isOwn
+                    ? Border.all(color: AppTheme.pink.withValues(alpha: 0.3))
+                    : null,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        comment.authorName,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _timeAgo(comment.createdAt),
+                        style: const TextStyle(
+                            color: AppTheme.textMuted, fontSize: 10),
+                      ),
+                      const Spacer(),
+                      if (isOwn)
+                        GestureDetector(
+                          onTap: onDelete,
+                          child: const Icon(Icons.close,
+                              size: 14, color: AppTheme.textMuted),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    comment.text,
+                    style: const TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

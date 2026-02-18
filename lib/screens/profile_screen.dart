@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
@@ -7,6 +6,7 @@ import '../models/models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 import 'post_detail_screen.dart';
+import 'search_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -19,11 +19,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _picker = ImagePicker();
   bool _editMode = false;
   final _nameCtrl = TextEditingController();
+  final _bioCtrl  = TextEditingController();
 
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _bioCtrl.dispose();
     super.dispose();
+  }
+
+  void _showAvatarFullscreen(BuildContext context, AppUser user) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(24),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Avatar ampliado
+            ClipOval(
+              child: SizedBox(
+                width: 260,
+                height: 260,
+                child: user.avatarBase64 != null && user.avatarBase64!.isNotEmpty
+                    ? UserAvatar(
+                        avatarBase64: user.avatarBase64,
+                        name: user.name,
+                        size: 260,
+                      )
+                    : UserAvatar(name: user.name, size: 260),
+              ),
+            ),
+            // Botão fechar
+            Positioned(
+              top: -12,
+              right: -12,
+              child: GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close_rounded,
+                      color: Colors.black87, size: 18),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _pickAvatar(DatabaseService db) async {
@@ -36,7 +86,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
       if (file == null) return;
       final bytes = await file.readAsBytes();
-      await db.updateUserProfile(avatarBase64: base64Encode(bytes));
+      await db.updateUserProfile(avatarBytes: bytes);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -64,16 +114,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               onPressed: () async {
                 if (_editMode) {
-                  // Salvar
+                  // Salvar nome e bio
                   if (_nameCtrl.text.trim().isNotEmpty) {
                     await db.updateUserProfile(
-                        name: _nameCtrl.text.trim());
+                      name: _nameCtrl.text.trim(),
+                      bio: _bioCtrl.text.trim(),
+                    );
                   }
                 } else {
                   _nameCtrl.text = user.name;
+                  _bioCtrl.text  = user.bio;
                 }
                 setState(() => _editMode = !_editMode);
               },
+            ),
+            // Busca
+            IconButton(
+              icon: const Icon(Icons.search_rounded,
+                  color: AppTheme.textSecondary),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SearchScreen()),
+              ),
             ),
             IconButton(
               icon: const Icon(Icons.logout_rounded,
@@ -130,18 +192,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
       decoration: BoxDecoration(
         color: AppTheme.bgCard,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-            color: AppTheme.purple.withValues(alpha: 0.2)),
+        border: Border.all(color: const Color(0xFFEEEEF5)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         children: [
-          // Avatar
+          // Avatar — 40% maior (112px) e clicável para ver em tela cheia
           Stack(
             children: [
-              UserAvatar(
-                avatarBase64: user.avatarBase64,
-                name: user.name,
-                size: 80,
+              GestureDetector(
+                onTap: () => _showAvatarFullscreen(context, user),
+                child: UserAvatar(
+                  avatarBase64: user.avatarBase64,
+                  name: user.name,
+                  size: 112,
+                ),
               ),
               Positioned(
                 right: 0,
@@ -149,13 +220,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 child: GestureDetector(
                   onTap: () => _pickAvatar(db),
                   child: Container(
-                    padding: const EdgeInsets.all(6),
+                    padding: const EdgeInsets.all(8),
                     decoration: const BoxDecoration(
                       gradient: AppTheme.gradientPurplePink,
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(Icons.camera_alt_rounded,
-                        color: Colors.white, size: 14),
+                        color: Colors.white, size: 16),
                   ),
                 ),
               ),
@@ -201,13 +272,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ],
           const SizedBox(height: 4),
-          Text(
-            user.email,
-            style: const TextStyle(
-                color: AppTheme.textMuted, fontSize: 13),
-          ),
+          // Bio em modo edição ou visualização
+          if (_editMode)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: TextField(
+                controller: _bioCtrl,
+                maxLines: 2,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: AppTheme.textSecondary, fontSize: 13),
+                decoration: const InputDecoration(
+                  hintText: 'Escreva sua bio…',
+                  border: UnderlineInputBorder(),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: AppTheme.purple),
+                  ),
+                  isDense: true,
+                  fillColor: Colors.transparent,
+                  filled: false,
+                ),
+              ),
+            )
+          else ...[
+            if (user.bio.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  user.bio,
+                  style: const TextStyle(
+                      color: AppTheme.textSecondary, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            Text(
+              user.email,
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
+            ),
+          ],
           const SizedBox(height: 16),
-          // Stats
+          // Stats: Posts · Seguidores · Seguindo
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -217,21 +321,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: AppTheme.purpleLight,
               ),
               _ProfileStat(
-                value: db.pins
-                    .where((p) =>
-                        p.authorId == user.id && !p.isDeleted)
-                    .length
-                    .toString(),
-                label: 'Pins criados',
+                value: db.followersCount(user.id).toString(),
+                label: 'Seguidores',
                 color: AppTheme.pink,
               ),
               _ProfileStat(
-                value: db
-                    .getUserPosts(user.id)
-                    .where((p) => p.totalPins > 0)
-                    .length
-                    .toString(),
-                label: 'Avaliados',
+                value: db.followingCount(user.id).toString(),
+                label: 'Seguindo',
                 color: AppTheme.success,
               ),
             ],

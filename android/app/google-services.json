@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "641618795234",
+    "project_id": "rateme-a1de6",
+    "storage_bucket": "rateme-a1de6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:641618795234:android:4e0ee9e26834849f12dcbb",
+        "android_client_info": {
+          "package_name": "com.mycompany.rateme"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBy_5Kkopj7XHdhEeF6xJdU7SFkR-nwFBs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:641618795234:android:b3182f5a24028df412dcbb",
+        "android_client_info": {
+          "package_name": "com.pinscore.rating"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBy_5Kkopj7XHdhEeF6xJdU7SFkR-nwFBs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -2,9 +2,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
-/// Exibe uma imagem a partir de base64 ou um placeholder gradiente para imagens demo
+// Helper: detecta se string é uma URL HTTP(S)
+bool _isHttpUrl(String? s) => s != null && (s.startsWith('http://') || s.startsWith('https://'));
+
+/// Exibe uma imagem a partir de URL (Firebase Storage), base64 ou placeholder demo.
+/// Prioridade: imageUrl > imageData (base64/demo).
 class AppImage extends StatelessWidget {
-  final String imageData;
+  final String imageData;  // base64 ou 'demo:...' – usado como fallback
+  final String? imageUrl;  // URL Firebase Storage – prioritário quando não vazio
   final double? width;
   final double? height;
   final BoxFit fit;
@@ -12,7 +17,8 @@ class AppImage extends StatelessWidget {
 
   const AppImage({
     super.key,
-    required this.imageData,
+    this.imageData = '',
+    this.imageUrl,
     this.width,
     this.height,
     this.fit = BoxFit.cover,
@@ -23,7 +29,27 @@ class AppImage extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget img;
 
-    if (imageData.startsWith('demo:')) {
+    // Prioridade 1: URL Firebase Storage
+    if (_isHttpUrl(imageUrl)) {
+      img = Image.network(
+        imageUrl!,
+        width: width,
+        height: height,
+        fit: fit,
+        loadingBuilder: (_, child, progress) => progress == null
+            ? child
+            : Container(
+                color: AppTheme.bgCard,
+                child: const Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppTheme.purple,
+                  ),
+                ),
+              ),
+        errorBuilder: (_, __, ___) => _errorWidget(),
+      );
+    } else if (imageData.startsWith('demo:')) {
       final parts = imageData.split(':');
       final color1 = _hexToColor(parts[1]);
       final color2 = _hexToColor(parts[2]);
@@ -34,7 +60,7 @@ class AppImage extends StatelessWidget {
         index: idx,
         fit: fit,
       );
-    } else {
+    } else if (imageData.isNotEmpty) {
       try {
         final bytes = base64Decode(imageData);
         img = Image.memory(
@@ -47,6 +73,8 @@ class AppImage extends StatelessWidget {
       } catch (_) {
         img = _errorWidget();
       }
+    } else {
+      img = _errorWidget();
     }
 
     if (borderRadius != null) {
@@ -113,19 +141,39 @@ class _DemoImagePlaceholder extends StatelessWidget {
 
 /// Avatar circular com inicial quando sem imagem
 class UserAvatar extends StatelessWidget {
-  final String? avatarBase64;
+  final String? avatarBase64;  // base64 ou null
+  final String? avatarUrl;     // URL Firebase Storage (prioritário)
   final String name;
   final double size;
 
   const UserAvatar({
     super.key,
     this.avatarBase64,
+    this.avatarUrl,
     required this.name,
     this.size = 36,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Prioridade 1: avatarUrl (Firebase Storage)
+    if (_isHttpUrl(avatarUrl)) {
+      return CircleAvatar(
+        radius: size / 2,
+        backgroundImage: NetworkImage(avatarUrl!),
+        backgroundColor: AppTheme.purple,
+        child: null,
+      );
+    }
+    // Prioridade 2: avatarBase64 pode conter URL
+    if (_isHttpUrl(avatarBase64)) {
+      return CircleAvatar(
+        radius: size / 2,
+        backgroundImage: NetworkImage(avatarBase64!),
+        backgroundColor: AppTheme.purple,
+        child: null,
+      );
+    }
     if (avatarBase64 != null && avatarBase64!.isNotEmpty) {
       try {
         final bytes = base64Decode(avatarBase64!);
@@ -151,53 +199,60 @@ class UserAvatar extends StatelessWidget {
 }
 
 /// Badge de nota da foto
+/// Círculo/pílula branco transparente — apenas borda branca + nota em branco.
+/// A foto abaixo fica visível sem interferência de cor.
 class ScoreBadge extends StatelessWidget {
   final double score;
   final bool large;
 
   const ScoreBadge({super.key, required this.score, this.large = false});
 
-  Color get _color {
-    if (score >= 8.0) return AppTheme.success;
-    if (score >= 5.0) return AppTheme.warning;
-    return AppTheme.error;
-  }
-
   @override
   Widget build(BuildContext context) {
+    final double fontSize   = large ? 16 : 12;
+    final double subSize    = large ? 11 : 9;
+    final double padH       = large ? 12 : 7;
+    final double padV       = large ? 7  : 4;
+    final double radius     = large ? 20 : 14;
+
     return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: large ? 14 : 8,
-        vertical: large ? 8 : 4,
-      ),
+      padding: EdgeInsets.symmetric(horizontal: padH, vertical: padV),
       decoration: BoxDecoration(
-        color: _color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(large ? 12 : 8),
-        border: Border.all(color: _color.withValues(alpha: 0.5), width: 1),
+        // Fundo completamente transparente
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: Colors.white, width: large ? 1.8 : 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.star_rounded,
-            size: large ? 20 : 14,
-            color: _color,
-          ),
-          const SizedBox(width: 4),
           Text(
             score.toStringAsFixed(1),
             style: TextStyle(
-              color: _color,
-              fontSize: large ? 18 : 13,
-              fontWeight: FontWeight.w700,
+              color: Colors.white,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w800,
+              shadows: const [
+                Shadow(color: Colors.black, blurRadius: 4, offset: Offset(0, 1)),
+              ],
             ),
           ),
           Text(
             '/10',
             style: TextStyle(
-              color: _color.withValues(alpha: 0.7),
-              fontSize: large ? 13 : 10,
-              fontWeight: FontWeight.w500,
+              color: Colors.white.withValues(alpha: 0.85),
+              fontSize: subSize,
+              fontWeight: FontWeight.w600,
+              shadows: const [
+                Shadow(color: Colors.black, blurRadius: 3),
+              ],
             ),
           ),
         ],
@@ -270,6 +325,9 @@ class GradientButton extends StatelessWidget {
 }
 
 /// Pin marker visual na imagem
+/// - Borda sempre branca
+/// - Fundo transparente (vidro fosco leve)
+/// - Texto da nota em branco
 class PinMarker extends StatelessWidget {
   final String label;
   final double score;
@@ -286,32 +344,26 @@ class PinMarker extends StatelessWidget {
     this.onTap,
   });
 
-  Color get _scoreColor {
-    if (score >= 8.0) return AppTheme.success;
-    if (score >= 5.0) return AppTheme.warning;
-    return AppTheme.error;
-  }
-
   @override
   Widget build(BuildContext context) {
+    final size = isSelected ? 52.0 : 36.0;
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        width: isSelected ? 52 : 36,
-        height: isSelected ? 52 : 36,
+        width: size,
+        height: size,
         decoration: BoxDecoration(
-          color: isOwn
-              ? AppTheme.pink.withValues(alpha: 0.9)
-              : AppTheme.purple.withValues(alpha: 0.9),
+          // Interior completamente transparente
+          color: Colors.transparent,
           shape: BoxShape.circle,
           border: Border.all(
-            color: isSelected ? Colors.white : _scoreColor,
+            color: Colors.white,
             width: isSelected ? 3 : 2,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
+              color: Colors.black.withValues(alpha: 0.45),
               blurRadius: 6,
               offset: const Offset(0, 2),
             ),
@@ -323,7 +375,14 @@ class PinMarker extends StatelessWidget {
             style: TextStyle(
               color: Colors.white,
               fontSize: isSelected ? 13 : 10,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w900,
+              shadows: const [
+                Shadow(
+                  color: Colors.black,
+                  blurRadius: 4,
+                  offset: Offset(0, 1),
+                ),
+              ],
             ),
           ),
         ),

@@ -1,93 +1,82 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 
 class DatabaseService extends ChangeNotifier {
-  static const String _usersKey = 'users_db';
-  static const String _postsKey = 'posts_db';
-  static const String _pinsKey = 'pins_db';
-  static const String _currentUserKey = 'current_user_id';
+  static const _kUsers         = 'users_v1';
+  static const _kPosts         = 'posts_v1';
+  static const _kPins          = 'pins_v1';
+  static const _kComments      = 'comments_v1';
+  static const _kNotifications = 'notifications_v1';
+  static const _kFollows       = 'follows_v1';
+  static const _kCurrentUser   = 'current_user_v1';
 
   final _uuid = const Uuid();
   SharedPreferences? _prefs;
 
-  List<AppUser> _users = [];
-  List<Post> _posts = [];
-  List<Pin> _pins = [];
-  AppUser? _currentUser;
+  AppUser?              _currentUser;
+  List<Post>            _posts         = [];
+  List<Pin>             _pins          = [];
+  List<PostComment>     _comments      = [];
+  List<AppNotification> _notifications = [];
+  List<Follow>          _follows       = [];
+  List<AppUser>         _users         = [];
 
-  List<AppUser> get users => _users;
-  List<Post> get posts => _posts;
-  List<Pin> get pins => _pins;
-  AppUser? get currentUser => _currentUser;
-  bool get isLoggedIn => _currentUser != null;
+  AppUser?              get currentUser       => _currentUser;
+  bool                  get isLoggedIn        => _currentUser != null;
+  List<Post>            get posts             => _posts;
+  List<AppUser>         get users             => _users;
+  List<Follow>          get follows           => _follows;
+  List<AppNotification> get notifications     => _notifications;
 
+  int get unreadNotifCount => _notifications
+      .where((n) => n.recipientId == _currentUser?.id && !n.isRead)
+      .length;
+
+  // ── INIT ────────────────────────────────────────────────────────────────────
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
     await _loadAll();
-    await _loadCurrentUser();
-    if (_posts.isEmpty) {
-      await _seedDemoData();
+    if (_users.isEmpty) await _seedDemoData();
+    final uid = _prefs!.getString(_kCurrentUser);
+    if (uid != null) {
+      try { _currentUser = _users.firstWhere((u) => u.id == uid); } catch (_) {}
     }
+    notifyListeners();
   }
 
   Future<void> _loadAll() async {
-    final prefs = _prefs!;
-
-    final usersJson = prefs.getString(_usersKey);
-    if (usersJson != null) {
-      final list = jsonDecode(usersJson) as List;
-      _users = list.map((e) => AppUser.fromJson(e as Map<String, dynamic>)).toList();
-    }
-
-    final postsJson = prefs.getString(_postsKey);
-    if (postsJson != null) {
-      final list = jsonDecode(postsJson) as List;
-      _posts = list.map((e) => Post.fromJson(e as Map<String, dynamic>)).toList();
-    }
-
-    final pinsJson = prefs.getString(_pinsKey);
-    if (pinsJson != null) {
-      final list = jsonDecode(pinsJson) as List;
-      _pins = list.map((e) => Pin.fromJson(e as Map<String, dynamic>)).toList();
-    }
+    _users         = _loadList(_kUsers,         (j) => AppUser.fromJson(j));
+    _posts         = _loadList(_kPosts,         (j) => Post.fromJson(j));
+    _pins          = _loadList(_kPins,          (j) => Pin.fromJson(j));
+    _comments      = _loadList(_kComments,      (j) => PostComment.fromJson(j));
+    _notifications = _loadList(_kNotifications, (j) => AppNotification.fromJson(j));
+    _follows       = _loadList(_kFollows,       (j) => Follow.fromJson(j));
   }
 
-  Future<void> _loadCurrentUser() async {
-    final id = _prefs!.getString(_currentUserKey);
-    if (id != null) {
-      try {
-        _currentUser = _users.firstWhere((u) => u.id == id);
-      } catch (_) {
-        _currentUser = null;
-      }
+  List<T> _loadList<T>(String key, T Function(Map<String,dynamic>) fromJson) {
+    final raw = _prefs?.getString(key);
+    if (raw == null) return [];
+    try {
+      final list = jsonDecode(raw) as List;
+      return list.map((e) => fromJson(e as Map<String,dynamic>)).toList();
+    } catch (_) { return []; }
+  }
+
+  Future<void> _save(String key, List items) async {
+    try {
+      final json = jsonEncode(items.map((e) => e.toJson()).toList());
+      await _prefs?.setString(key, json);
+    } catch (e) {
+      if (kDebugMode) debugPrint('_save erro [$key]: $e');
     }
   }
 
-  Future<void> _saveUsers() async {
-    await _prefs!.setString(
-      _usersKey,
-      jsonEncode(_users.map((u) => u.toJson()).toList()),
-    );
-  }
-
-  Future<void> _savePosts() async {
-    await _prefs!.setString(
-      _postsKey,
-      jsonEncode(_posts.map((p) => p.toJson()).toList()),
-    );
-  }
-
-  Future<void> _savePins() async {
-    await _prefs!.setString(
-      _pinsKey,
-      jsonEncode(_pins.map((p) => p.toJson()).toList()),
-    );
-  }
-
-  // ─── AUTH ───────────────────────────────────────────────────────────────────
+  // ── AUTH ────────────────────────────────────────────────────────────────────
+  String _hash(String s) => base64Encode(utf8.encode(s));
 
   Future<String?> signup({
     required String name,
@@ -97,16 +86,16 @@ class DatabaseService extends ChangeNotifier {
     if (_users.any((u) => u.email.toLowerCase() == email.toLowerCase())) {
       return 'E-mail já cadastrado.';
     }
+    if (password.length < 6) return 'Senha deve ter pelo menos 6 caracteres.';
     final user = AppUser(
-      id: _uuid.v4(),
-      name: name,
-      email: email,
-      passwordHash: _hashPassword(password),
+      id: _uuid.v4(), name: name, email: email,
+      passwordHash: _hash(password),
       createdAt: DateTime.now(),
     );
     _users.add(user);
-    await _saveUsers();
-    await _setCurrentUser(user);
+    await _save(_kUsers, _users);
+    _currentUser = user;
+    await _prefs?.setString(_kCurrentUser, user.id);
     notifyListeners();
     return null;
   }
@@ -116,10 +105,9 @@ class DatabaseService extends ChangeNotifier {
       final user = _users.firstWhere(
         (u) => u.email.toLowerCase() == email.toLowerCase(),
       );
-      if (user.passwordHash != _hashPassword(password)) {
-        return 'Senha incorreta.';
-      }
-      await _setCurrentUser(user);
+      if (user.passwordHash != _hash(password)) return 'Senha incorreta.';
+      _currentUser = user;
+      await _prefs?.setString(_kCurrentUser, user.id);
       notifyListeners();
       return null;
     } catch (_) {
@@ -129,69 +117,107 @@ class DatabaseService extends ChangeNotifier {
 
   Future<void> logout() async {
     _currentUser = null;
-    await _prefs!.remove(_currentUserKey);
+    await _prefs?.remove(_kCurrentUser);
     notifyListeners();
   }
 
-  Future<void> _setCurrentUser(AppUser user) async {
-    _currentUser = user;
-    await _prefs!.setString(_currentUserKey, user.id);
+  // ── USER ────────────────────────────────────────────────────────────────────
+  AppUser? getUserById(String id) {
+    try { return _users.firstWhere((u) => u.id == id); } catch (_) { return null; }
   }
 
-  String _hashPassword(String password) {
-    // Simple hash para demo (produção deve usar bcrypt ou similar)
-    int hash = 0;
-    for (int i = 0; i < password.length; i++) {
-      hash = ((hash << 5) - hash) + password.codeUnitAt(i);
-      hash = hash & hash;
-    }
-    return hash.toString();
+  List<AppUser> searchUsers(String query) {
+    if (query.trim().isEmpty) return [];
+    final q = query.toLowerCase();
+    return _users.where((u) =>
+        u.id != _currentUser?.id &&
+        (u.name.toLowerCase().contains(q) ||
+         u.email.toLowerCase().contains(q))).toList();
   }
-
-  // ─── USER ────────────────────────────────────────────────────────────────────
 
   Future<void> updateUserProfile({
     String? name,
-    String? avatarBase64,
+    String? bio,
     bool? allowPublicPins,
+    Uint8List? avatarBytes,
   }) async {
+    if (_currentUser == null) return;
+    if (name != null)            { _currentUser!.name = name; }
+    if (bio != null)             { _currentUser!.bio = bio; }
+    if (allowPublicPins != null) { _currentUser!.allowPublicPinsOnMyPosts = allowPublicPins; }
+    if (avatarBytes != null)     { _currentUser!.avatarBase64 = base64Encode(avatarBytes); }
+
     final idx = _users.indexWhere((u) => u.id == _currentUser!.id);
-    if (idx == -1) return;
-    if (name != null) {
-      _users[idx].name = name;
+    if (idx != -1) _users[idx] = _currentUser!;
+    await _save(_kUsers, _users);
+
+    // Propagar nome/avatar para posts
+    if (name != null || avatarBytes != null) {
+      for (final p in _posts.where((p) => p.ownerId == _currentUser!.id)) {
+        if (name != null) p.ownerName = name;
+        if (avatarBytes != null) p.ownerAvatarBase64 = _currentUser!.avatarBase64;
+      }
+      await _save(_kPosts, _posts);
     }
-    if (avatarBase64 != null) _users[idx].avatarBase64 = avatarBase64;
-    if (allowPublicPins != null) {
-      _users[idx].allowPublicPinsOnMyPosts = allowPublicPins;
-    }
-    _currentUser = _users[idx];
-    await _saveUsers();
-    // Atualizar posts do usuário
-    for (var p in _posts.where((p) => p.ownerId == _currentUser!.id)) {
-      p.ownerName = _users[idx].name;
-      p.ownerAvatarBase64 = _users[idx].avatarBase64;
-    }
-    await _savePosts();
     notifyListeners();
   }
 
-  // ─── POSTS ───────────────────────────────────────────────────────────────────
+  // ── FOLLOWS ──────────────────────────────────────────────────────────────────
+  bool isFollowing(String targetId) => _follows.any(
+      (f) => f.followerId == _currentUser?.id && f.followingId == targetId);
 
+  int followersCount(String userId) =>
+      _follows.where((f) => f.followingId == userId).length;
+
+  int followingCount(String userId) =>
+      _follows.where((f) => f.followerId == userId).length;
+
+  List<String> followingIds(String userId) =>
+      _follows.where((f) => f.followerId == userId).map((f) => f.followingId).toList();
+
+  Future<void> toggleFollow(String targetId) async {
+    final myId = _currentUser!.id;
+    final existing = _follows.indexWhere(
+        (f) => f.followerId == myId && f.followingId == targetId);
+    if (existing != -1) {
+      _follows.removeAt(existing);
+    } else {
+      _follows.add(Follow(
+          followerId: myId, followingId: targetId, createdAt: DateTime.now()));
+      _addNotification(
+        recipientId: targetId,
+        type: NotifType.newFollower,
+        body: '${_currentUser!.name} começou a seguir você.',
+      );
+    }
+    await _save(_kFollows, _follows);
+    notifyListeners();
+  }
+
+  // ── POSTS ───────────────────────────────────────────────────────────────────
   Future<Post> createPost({
-    required String imageBase64,
+    required Uint8List imageBytes,
     required String caption,
   }) async {
+    final pid = _uuid.v4();
+    // Codifica em base64 — já limitado a 800KB pelo create_post_screen
+    final imgB64 = base64Encode(imageBytes);
     final post = Post(
-      id: _uuid.v4(),
+      id: pid,
       ownerId: _currentUser!.id,
       ownerName: _currentUser!.name,
       ownerAvatarBase64: _currentUser!.avatarBase64,
-      imageBase64: imageBase64,
+      imageBase64: imgB64,
       caption: caption,
       createdAt: DateTime.now(),
     );
     _posts.insert(0, post);
-    await _savePosts();
+    // Tenta salvar; se falhar (localStorage cheio), mantém em memória
+    try {
+      await _save(_kPosts, _posts);
+    } catch (e) {
+      if (kDebugMode) debugPrint('createPost save erro: $e');
+    }
     notifyListeners();
     return post;
   }
@@ -199,8 +225,10 @@ class DatabaseService extends ChangeNotifier {
   Future<void> deletePost(String postId) async {
     _posts.removeWhere((p) => p.id == postId);
     _pins.removeWhere((p) => p.postId == postId);
-    await _savePosts();
-    await _savePins();
+    _comments.removeWhere((c) => c.postId == postId);
+    await _save(_kPosts, _posts);
+    await _save(_kPins, _pins);
+    await _save(_kComments, _comments);
     notifyListeners();
   }
 
@@ -208,12 +236,27 @@ class DatabaseService extends ChangeNotifier {
     final idx = _posts.indexWhere((p) => p.id == postId);
     if (idx == -1) return;
     _posts[idx].allowPublicPinsOverride = allowPublic;
-    await _savePosts();
+    await _save(_kPosts, _posts);
     notifyListeners();
   }
 
-  List<Post> getFeedPosts() {
+  List<Post> getAllFeedPosts() {
     final list = List<Post>.from(_posts);
+    list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return list;
+  }
+
+  List<Post> getFeedPosts() {
+    final followedIds = followingIds(_currentUser?.id ?? '').toSet();
+    final myId = _currentUser?.id ?? '';
+    List<Post> list;
+    if (followedIds.isEmpty) {
+      list = List<Post>.from(_posts);
+    } else {
+      final relevant = {...followedIds, myId};
+      list = _posts.where((p) => relevant.contains(p.ownerId)).toList();
+      if (list.isEmpty) list = List<Post>.from(_posts);
+    }
     list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return list;
   }
@@ -224,23 +267,17 @@ class DatabaseService extends ChangeNotifier {
     return list;
   }
 
-  List<Post> getRankingPosts({int minPins = 5}) {
+  List<Post> getRankingPosts({int minPins = 5, int topN = 50}) {
     final list = _posts.where((p) => p.totalPins >= minPins).toList();
     list.sort((a, b) => b.notaMedia.compareTo(a.notaMedia));
-    return list.take(3).toList();
+    return list.take(topN).toList();
   }
 
   Post? getPostById(String id) {
-    try {
-      return _posts.firstWhere((p) => p.id == id);
-    } catch (_) {
-      return null;
-    }
+    try { return _posts.firstWhere((p) => p.id == id); } catch (_) { return null; }
   }
 
-  // ─── PINS ─────────────────────────────────────────────────────────────────
-
-  /// Retorna pins visíveis para o usuário atual em um determinado post
+  // ── PINS ─────────────────────────────────────────────────────────────────────
   List<Pin> getVisiblePins(String postId) {
     final post = getPostById(postId);
     if (post == null) return [];
@@ -248,36 +285,17 @@ class DatabaseService extends ChangeNotifier {
     final postOwner = getUserById(post.ownerId);
     final ownerAllowsPublic = (postOwner?.allowPublicPinsOnMyPosts ?? true) &&
         post.allowPublicPinsOverride;
-
     return _pins.where((pin) {
-      if (pin.postId != postId) return false;
-      if (pin.isDeleted) return false;
-
-      // Dono do post vê tudo
-      if (currentUserId == post.ownerId) return true;
-
-      // Autor do pin sempre vê o próprio pin
-      if (currentUserId == pin.authorId) return true;
-
-      // Se dono não permite pins públicos → esconde de todos (exceto dono e autor)
-      if (!ownerAllowsPublic) return false;
-
-      // Pin público + dono permite → todos veem
+      if (pin.postId != postId || pin.isDeleted) return false;
+      if (currentUserId == post.ownerId)  return true;
+      if (currentUserId == pin.authorId)  return true;
+      if (!ownerAllowsPublic)             return false;
       return pin.isPublic;
     }).toList();
   }
 
-  List<Pin> getPinsForPost(String postId) {
-    return _pins
-        .where((p) => p.postId == postId && !p.isDeleted)
-        .toList();
-  }
-
-  int getPinCountForUserOnPost(String postId, String userId) {
-    return _pins
-        .where((p) => p.postId == postId && p.authorId == userId && !p.isDeleted)
-        .length;
-  }
+  int getPinCountForUserOnPost(String postId, String userId) =>
+      _pins.where((p) => p.postId == postId && p.authorId == userId && !p.isDeleted).length;
 
   Future<String?> createPin({
     required String postId,
@@ -288,55 +306,54 @@ class DatabaseService extends ChangeNotifier {
     required String comment,
     required bool isPublic,
   }) async {
-    final currentUserId = _currentUser!.id;
-    final count = getPinCountForUserOnPost(postId, currentUserId);
-    if (count >= 10) {
+    final uid = _currentUser!.id;
+    if (getPinCountForUserOnPost(postId, uid) >= 10) {
       return 'Você já atingiu o limite de 10 pins nesta foto.';
     }
-    if (targetLabel.trim().isEmpty) {
-      return 'Informe um título/alvo para o pin.';
-    }
+    if (targetLabel.trim().isEmpty) return 'Informe um título/alvo para o pin.';
 
     final pin = Pin(
-      id: _uuid.v4(),
-      postId: postId,
-      authorId: currentUserId,
-      authorName: _currentUser!.name,
+      id: _uuid.v4(), postId: postId,
+      authorId: uid, authorName: _currentUser!.name,
       authorAvatarBase64: _currentUser!.avatarBase64,
-      xPercent: xPercent,
-      yPercent: yPercent,
+      xPercent: xPercent, yPercent: yPercent,
       targetLabel: targetLabel.trim(),
       score: score.clamp(0.0, 10.0),
-      comment: comment,
-      isPublic: isPublic,
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
+      comment: comment, isPublic: isPublic,
+      createdAt: DateTime.now(), updatedAt: DateTime.now(),
     );
     _pins.add(pin);
-    await _savePins();
+    await _save(_kPins, _pins);
     await _recalculatePost(postId);
+
+    final post = getPostById(postId);
+    if (post != null && post.ownerId != uid) {
+      _addNotification(
+        recipientId: post.ownerId,
+        type: NotifType.newPin,
+        body: '${_currentUser!.name} avaliou "${post.caption.isEmpty ? 'sua foto' : post.caption}" com nota ${score.toStringAsFixed(1)} no pin "${targetLabel.trim()}".',
+        postId: postId,
+      );
+    }
     notifyListeners();
     return null;
   }
 
   Future<String?> editPin({
     required String pinId,
-    String? targetLabel,
-    double? score,
-    String? comment,
-    bool? isPublic,
+    String? targetLabel, double? score, String? comment, bool? isPublic,
   }) async {
     final idx = _pins.indexWhere((p) => p.id == pinId);
     if (idx == -1) return 'Pin não encontrado.';
     if (_pins[idx].authorId != _currentUser!.id) return 'Sem permissão.';
 
     if (targetLabel != null) _pins[idx].targetLabel = targetLabel.trim();
-    if (score != null) _pins[idx].score = score.clamp(0.0, 10.0);
-    if (comment != null) _pins[idx].comment = comment;
-    if (isPublic != null) _pins[idx].isPublic = isPublic;
+    if (score != null)       _pins[idx].score = score.clamp(0.0, 10.0);
+    if (comment != null)     _pins[idx].comment = comment;
+    if (isPublic != null)    _pins[idx].isPublic = isPublic;
     _pins[idx].updatedAt = DateTime.now();
 
-    await _savePins();
+    await _save(_kPins, _pins);
     await _recalculatePost(_pins[idx].postId);
     notifyListeners();
     return null;
@@ -347,153 +364,174 @@ class DatabaseService extends ChangeNotifier {
     if (idx == -1) return;
     final postId = _pins[idx].postId;
     _pins[idx].isDeleted = true;
-    await _savePins();
+    await _save(_kPins, _pins);
     await _recalculatePost(postId);
     notifyListeners();
   }
 
   Future<void> _recalculatePost(String postId) async {
-    final activePins = _pins.where((p) => p.postId == postId && !p.isDeleted).toList();
-    final postIdx = _posts.indexWhere((p) => p.id == postId);
-    if (postIdx == -1) return;
-
-    final total = activePins.length;
+    final active = _pins.where((p) => p.postId == postId && !p.isDeleted).toList();
+    final idx = _posts.indexWhere((p) => p.id == postId);
+    if (idx == -1) return;
+    final total = active.length;
     final media = total > 0
-        ? activePins.map((p) => p.score).reduce((a, b) => a + b) / total
-        : 0.0;
-    final avaliadores = activePins.map((p) => p.authorId).toSet().length;
-
-    _posts[postIdx].notaMedia = double.parse(media.toStringAsFixed(1));
-    _posts[postIdx].totalPins = total;
-    _posts[postIdx].totalAvaliadores = avaliadores;
-
-    await _savePosts();
+        ? active.map((p) => p.score).reduce((a, b) => a + b) / total : 0.0;
+    _posts[idx].notaMedia        = double.parse(media.toStringAsFixed(1));
+    _posts[idx].totalPins        = total;
+    _posts[idx].totalAvaliadores = active.map((p) => p.authorId).toSet().length;
+    await _save(_kPosts, _posts);
   }
 
-  AppUser? getUserById(String id) {
-    try {
-      return _users.firstWhere((u) => u.id == id);
-    } catch (_) {
-      return null;
-    }
+  // ── COMMENTS ─────────────────────────────────────────────────────────────────
+  List<PostComment> getCommentsForPost(String postId) {
+    return _comments
+        .where((c) => c.postId == postId && !c.isDeleted)
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
-  // ─── SEED DEMO DATA ──────────────────────────────────────────────────────────
+  Future<String?> addComment(String postId, String text) async {
+    if (text.trim().isEmpty) return 'Comentário não pode ser vazio.';
+    final comment = PostComment(
+      id: _uuid.v4(), postId: postId,
+      authorId: _currentUser!.id, authorName: _currentUser!.name,
+      authorAvatarBase64: _currentUser!.avatarBase64,
+      text: text.trim(), createdAt: DateTime.now(),
+    );
+    _comments.add(comment);
 
-  Future<void> _seedDemoData() async {
-    // Criar usuários demo
-    final u1 = AppUser(
-      id: 'demo-user-1',
-      name: 'Ana Costa',
-      email: 'ana@demo.com',
-      passwordHash: _hashPassword('123456'),
-      createdAt: DateTime.now().subtract(const Duration(days: 30)),
-    );
-    final u2 = AppUser(
-      id: 'demo-user-2',
-      name: 'Pedro Lima',
-      email: 'pedro@demo.com',
-      passwordHash: _hashPassword('123456'),
-      createdAt: DateTime.now().subtract(const Duration(days: 20)),
-    );
-    final u3 = AppUser(
-      id: 'demo-user-3',
-      name: 'Mariana Silva',
-      email: 'mariana@demo.com',
-      passwordHash: _hashPassword('123456'),
-      createdAt: DateTime.now().subtract(const Duration(days: 15)),
-    );
-    _users.addAll([u1, u2, u3]);
-    await _saveUsers();
-
-    // Criar posts demo com imagens de placeholder (cores sólidas base64)
-    final post1 = Post(
-      id: 'demo-post-1',
-      ownerId: u1.id,
-      ownerName: u1.name,
-      imageBase64: _getDemoImageBase64(1),
-      caption: 'Pôr do sol incrível na praia 🌅',
-      createdAt: DateTime.now().subtract(const Duration(hours: 5)),
-    );
-    final post2 = Post(
-      id: 'demo-post-2',
-      ownerId: u2.id,
-      ownerName: u2.name,
-      imageBase64: _getDemoImageBase64(2),
-      caption: 'Meu prato favorito do restaurante italiano 🍝',
-      createdAt: DateTime.now().subtract(const Duration(hours: 10)),
-    );
-    final post3 = Post(
-      id: 'demo-post-3',
-      ownerId: u3.id,
-      ownerName: u3.name,
-      imageBase64: _getDemoImageBase64(3),
-      caption: 'Retrato no jardim botânico 🌸',
-      createdAt: DateTime.now().subtract(const Duration(days: 1)),
-    );
-    final post4 = Post(
-      id: 'demo-post-4',
-      ownerId: u1.id,
-      ownerName: u1.name,
-      imageBase64: _getDemoImageBase64(4),
-      caption: 'Arquitetura urbana 🏙️',
-      createdAt: DateTime.now().subtract(const Duration(days: 2)),
-    );
-    _posts.addAll([post1, post2, post3, post4]);
-
-    // Criar pins demo para ranking funcionar (mínimo 5 pins)
-    final demoScores1 = [9.0, 8.5, 9.5, 8.0, 9.0, 7.5];
-    final demoScores2 = [7.0, 8.0, 6.5, 7.5, 8.5, 9.0];
-    final demoScores3 = [9.5, 10.0, 9.0, 8.5, 9.0, 8.0];
-    final demoScores4 = [5.0, 6.0, 5.5, 7.0, 6.5];
-
-    final demoLabels = ['céu', 'luz', 'composição', 'cor', 'foco', 'enquadramento'];
-    final authors = [u1, u2, u3];
-
-    void addDemoPins(String postId, List<double> scores) {
-      for (int i = 0; i < scores.length; i++) {
-        final author = authors[i % authors.length];
-        _pins.add(Pin(
-          id: _uuid.v4(),
-          postId: postId,
-          authorId: author.id,
-          authorName: author.name,
-          xPercent: 20.0 + (i * 12.0),
-          yPercent: 25.0 + (i * 8.0),
-          targetLabel: demoLabels[i % demoLabels.length],
-          score: scores[i],
-          isPublic: true,
-          createdAt: DateTime.now().subtract(Duration(hours: i + 1)),
-          updatedAt: DateTime.now().subtract(Duration(hours: i + 1)),
-        ));
-      }
+    final pIdx = _posts.indexWhere((p) => p.id == postId);
+    if (pIdx != -1) {
+      _posts[pIdx].totalComments =
+          _comments.where((c) => c.postId == postId && !c.isDeleted).length;
     }
+    await _save(_kComments, _comments);
+    await _save(_kPosts, _posts);
 
-    addDemoPins(post1.id, demoScores1);
-    addDemoPins(post2.id, demoScores2);
-    addDemoPins(post3.id, demoScores3);
-    addDemoPins(post4.id, demoScores4);
-
-    await _savePins();
-
-    // Recalcular todos os posts
-    for (final p in _posts) {
-      await _recalculatePost(p.id);
+    final post = getPostById(postId);
+    if (post != null && post.ownerId != _currentUser!.id) {
+      _addNotification(
+        recipientId: post.ownerId,
+        type: NotifType.newComment,
+        body: '${_currentUser!.name} comentou: "${text.trim().length > 60 ? '${text.trim().substring(0, 60)}…' : text.trim()}"',
+        postId: postId,
+      );
     }
+    notifyListeners();
+    return null;
+  }
+
+  Future<void> deleteComment(String commentId) async {
+    final idx = _comments.indexWhere((c) => c.id == commentId);
+    if (idx == -1) return;
+    final postId = _comments[idx].postId;
+    _comments[idx].isDeleted = true;
+    final pIdx = _posts.indexWhere((p) => p.id == postId);
+    if (pIdx != -1) {
+      _posts[pIdx].totalComments =
+          _comments.where((c) => c.postId == postId && !c.isDeleted).length;
+    }
+    await _save(_kComments, _comments);
+    await _save(_kPosts, _posts);
     notifyListeners();
   }
 
-  String _getDemoImageBase64(int idx) {
-    // Gera imagens coloridas simples como placeholder SVG convertido
-    // Na prática seriam imagens reais, mas para demo usamos SVG data URI
-    final colors = [
-      '#1a1a4e,#7C3AED',
-      '#1e3a2f,#10B981',
-      '#2d1b4e,#EC4899',
-      '#1a2d4e,#3B82F6',
+  // ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+  List<AppNotification> getMyNotifications() {
+    return _notifications
+        .where((n) => n.recipientId == _currentUser?.id)
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  }
+
+  void _addNotification({
+    required String recipientId,
+    required NotifType type,
+    required String body,
+    String? postId,
+    String? pinId,
+  }) {
+    final notif = AppNotification(
+      id: _uuid.v4(), recipientId: recipientId,
+      actorId: _currentUser!.id, actorName: _currentUser!.name,
+      actorAvatarBase64: _currentUser!.avatarBase64,
+      type: type, postId: postId, pinId: pinId,
+      body: body, createdAt: DateTime.now(),
+    );
+    _notifications.insert(0, notif);
+    if (_notifications.length > 100) {
+      _notifications = _notifications.take(100).toList();
+    }
+    _save(_kNotifications, _notifications);
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    for (final n in _notifications) { n.isRead = true; }
+    await _save(_kNotifications, _notifications);
+    notifyListeners();
+  }
+
+  Future<void> markNotificationRead(String id) async {
+    final idx = _notifications.indexWhere((n) => n.id == id);
+    if (idx != -1) _notifications[idx].isRead = true;
+    await _save(_kNotifications, _notifications);
+    notifyListeners();
+  }
+
+  // ── DEMO DATA ─────────────────────────────────────────────────────────────────
+  Future<void> _seedDemoData() async {
+    final u1 = AppUser(id: 'demo-1', name: 'Ana Silva',    email: 'ana@demo.com',     passwordHash: _hash('123456'), createdAt: DateTime.now().subtract(const Duration(days: 30)));
+    final u2 = AppUser(id: 'demo-2', name: 'Pedro Costa',  email: 'pedro@demo.com',   passwordHash: _hash('123456'), createdAt: DateTime.now().subtract(const Duration(days: 20)));
+    final u3 = AppUser(id: 'demo-3', name: 'Mariana Lima', email: 'mariana@demo.com', passwordHash: _hash('123456'), createdAt: DateTime.now().subtract(const Duration(days: 10)));
+    _users = [u1, u2, u3];
+
+    _follows = [
+      Follow(followerId: 'demo-1', followingId: 'demo-2', createdAt: DateTime.now()),
+      Follow(followerId: 'demo-2', followingId: 'demo-1', createdAt: DateTime.now()),
+      Follow(followerId: 'demo-3', followingId: 'demo-1', createdAt: DateTime.now()),
     ];
-    final pair = colors[(idx - 1) % colors.length].split(',');
-    // Retorna string vazia — imagens serão tratadas com placeholder widget
-    return 'demo:${pair[0]}:${pair[1]}:$idx';
+
+    final p1 = Post(id: 'post-1', ownerId: 'demo-1', ownerName: 'Ana Silva',
+        imageBase64: 'demo:7C3AED:EC4899:1', caption: 'Meu look favorito ✨',
+        createdAt: DateTime.now().subtract(const Duration(hours: 5)),
+        notaMedia: 8.6, totalPins: 6, totalAvaliadores: 2, totalComments: 2);
+    final p2 = Post(id: 'post-2', ownerId: 'demo-2', ownerName: 'Pedro Costa',
+        imageBase64: 'demo:10B981:3B82F6:2', caption: 'Treino concluído 💪',
+        createdAt: DateTime.now().subtract(const Duration(hours: 12)),
+        notaMedia: 7.8, totalPins: 6, totalAvaliadores: 2, totalComments: 1);
+    final p3 = Post(id: 'post-3', ownerId: 'demo-3', ownerName: 'Mariana Lima',
+        imageBase64: 'demo:F59E0B:EF4444:3', caption: 'Pôr do sol incrível 🌅',
+        createdAt: DateTime.now().subtract(const Duration(days: 1)),
+        notaMedia: 9.0, totalPins: 6, totalAvaliadores: 3, totalComments: 3);
+    final p4 = Post(id: 'post-4', ownerId: 'demo-1', ownerName: 'Ana Silva',
+        imageBase64: 'demo:EC4899:F59E0B:4', caption: 'Novo corte 💇‍♀️',
+        createdAt: DateTime.now().subtract(const Duration(days: 2)),
+        notaMedia: 6.0, totalPins: 5, totalAvaliadores: 2, totalComments: 0);
+    _posts = [p1, p2, p3, p4];
+
+    _pins = [
+      Pin(id: 'pin-1', postId: 'post-1', authorId: 'demo-2', authorName: 'Pedro Costa', xPercent: 30, yPercent: 25, targetLabel: 'Cabelo', score: 9.0, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
+      Pin(id: 'pin-2', postId: 'post-1', authorId: 'demo-2', authorName: 'Pedro Costa', xPercent: 50, yPercent: 50, targetLabel: 'Roupa', score: 8.5, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
+      Pin(id: 'pin-3', postId: 'post-1', authorId: 'demo-3', authorName: 'Mariana Lima', xPercent: 45, yPercent: 30, targetLabel: 'Expressão', score: 9.0, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
+      Pin(id: 'pin-4', postId: 'post-2', authorId: 'demo-1', authorName: 'Ana Silva', xPercent: 50, yPercent: 40, targetLabel: 'Postura', score: 8.0, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
+      Pin(id: 'pin-5', postId: 'post-3', authorId: 'demo-1', authorName: 'Ana Silva', xPercent: 60, yPercent: 30, targetLabel: 'Céu', score: 9.5, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
+      Pin(id: 'pin-6', postId: 'post-3', authorId: 'demo-2', authorName: 'Pedro Costa', xPercent: 40, yPercent: 60, targetLabel: 'Horizonte', score: 9.0, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
+      Pin(id: 'pin-7', postId: 'post-3', authorId: 'demo-3', authorName: 'Mariana Lima', xPercent: 50, yPercent: 50, targetLabel: 'Composição', score: 8.5, isPublic: true, createdAt: DateTime.now(), updatedAt: DateTime.now()),
+    ];
+
+    _comments = [
+      PostComment(id: 'c-1', postId: 'post-1', authorId: 'demo-2', authorName: 'Pedro Costa', text: 'Ficou incrível! 😍', createdAt: DateTime.now()),
+      PostComment(id: 'c-2', postId: 'post-1', authorId: 'demo-3', authorName: 'Mariana Lima', text: 'Arrasou!', createdAt: DateTime.now()),
+      PostComment(id: 'c-3', postId: 'post-2', authorId: 'demo-1', authorName: 'Ana Silva', text: 'Top demais! 💪', createdAt: DateTime.now()),
+      PostComment(id: 'c-4', postId: 'post-3', authorId: 'demo-1', authorName: 'Ana Silva', text: 'Que foto linda!', createdAt: DateTime.now()),
+      PostComment(id: 'c-5', postId: 'post-3', authorId: 'demo-2', authorName: 'Pedro Costa', text: 'Perfeita ✨', createdAt: DateTime.now()),
+      PostComment(id: 'c-6', postId: 'post-3', authorId: 'demo-3', authorName: 'Mariana Lima', text: 'Meu pôr do sol favorito!', createdAt: DateTime.now()),
+    ];
+
+    await _save(_kUsers, _users);
+    await _save(_kPosts, _posts);
+    await _save(_kPins, _pins);
+    await _save(_kComments, _comments);
+    await _save(_kFollows, _follows);
   }
 }

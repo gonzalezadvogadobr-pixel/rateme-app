@@ -10,11 +10,12 @@ class RankingScreen extends StatelessWidget {
   const RankingScreen({super.key});
 
   static const int _minPins = 5;
+  static const int _topN    = 50;
 
   @override
   Widget build(BuildContext context) {
     return Consumer<DatabaseService>(builder: (context, db, _) {
-      final top3 = db.getRankingPosts(minPins: _minPins);
+      final top3 = db.getRankingPosts(minPins: _minPins, topN: _topN);
       final allPosts = db.getFeedPosts();
       final filtered = allPosts.where((p) => p.totalPins < _minPins).length;
 
@@ -58,9 +59,9 @@ class RankingScreen extends StatelessWidget {
                     const Icon(Icons.emoji_events_rounded,
                         color: Colors.white, size: 48),
                     const SizedBox(height: 8),
-                    const Text(
-                      'Top 3 Fotos',
-                      style: TextStyle(
+                    Text(
+                      'Top $_topN Fotos',
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 24,
                         fontWeight: FontWeight.w900,
@@ -75,7 +76,7 @@ class RankingScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Requer no mínimo $_minPins pins para entrar no ranking',
+                      'Mínimo $_minPins pins para entrar no ranking',
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.6),
                         fontSize: 11,
@@ -89,12 +90,10 @@ class RankingScreen extends StatelessWidget {
               if (top3.isEmpty) ...[
                 _buildEmptyRanking(filtered),
               ] else ...[
-                ...top3.asMap().entries.map((entry) {
-                  return _RankingCard(
+                ...top3.asMap().entries.map((entry) => _RankingCard(
                     post: entry.value,
                     position: entry.key + 1,
-                  );
-                }),
+                  )),
               ],
 
               if (allPosts.length > 3) ...[
@@ -269,7 +268,7 @@ class _RankingCard extends StatelessWidget {
               borderRadius:
                   const BorderRadius.vertical(bottom: Radius.circular(14)),
               child: AspectRatio(
-                aspectRatio: position == 1 ? 1 : 16 / 9,
+                aspectRatio: 4 / 6,
                 child: Stack(
                   children: [
                     SizedBox.expand(
@@ -363,7 +362,9 @@ class _OtherPostRow extends StatelessWidget {
                 width: 56,
                 height: 56,
                 child: AppImage(
-                    imageData: post.imageBase64, fit: BoxFit.cover),
+                  imageData: post.imageBase64,
+                  fit: BoxFit.cover,
+                ),
               ),
             ),
             const SizedBox(width: 12),

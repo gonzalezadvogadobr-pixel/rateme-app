@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
@@ -15,6 +17,7 @@ class CreatePostScreen extends StatefulWidget {
 
 class _CreatePostScreenState extends State<CreatePostScreen> {
   final _captionCtrl = TextEditingController();
+  Uint8List? _imageBytes;
   String? _imageBase64;
   bool _loading = false;
   final _picker = ImagePicker();
@@ -27,15 +30,31 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
+      // Comprime automaticamente para caber no localStorage (~1MB base64)
       final file = await _picker.pickImage(
         source: source,
         maxWidth: 1080,
         maxHeight: 1080,
-        imageQuality: 85,
+        imageQuality: 75,
       );
       if (file == null) return;
-      final bytes = await file.readAsBytes();
-      setState(() => _imageBase64 = base64Encode(bytes));
+      Uint8List bytes = await file.readAsBytes();
+
+      // Se ainda estiver grande, recomprime com qualidade menor
+      if (bytes.lengthInBytes > 700 * 1024) {
+        final smaller = await _picker.pickImage(
+          source: source,
+          maxWidth: 720,
+          maxHeight: 720,
+          imageQuality: 55,
+        );
+        if (smaller != null) bytes = await smaller.readAsBytes();
+      }
+
+      setState(() {
+        _imageBytes = bytes;
+        _imageBase64 = base64Encode(bytes);
+      });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -49,30 +68,42 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 
   Future<void> _publish() async {
-    if (_imageBase64 == null) {
+    if (_imageBytes == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Selecione uma imagem.'),
+          content: Text('Selecione uma imagem primeiro.'),
           backgroundColor: AppTheme.error,
         ),
       );
       return;
     }
     setState(() => _loading = true);
-    final db = context.read<DatabaseService>();
-    await db.createPost(
-      imageBase64: _imageBase64!,
-      caption: _captionCtrl.text.trim(),
-    );
-    if (mounted) {
-      setState(() => _loading = false);
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Post publicado!'),
-          backgroundColor: AppTheme.success,
-        ),
+    try {
+      final db = context.read<DatabaseService>();
+      await db.createPost(
+        imageBytes: _imageBytes!,
+        caption: _captionCtrl.text.trim(),
       );
+      if (mounted) {
+        setState(() => _loading = false);
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Post publicado com sucesso!'),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao publicar: $e'),
+            backgroundColor: AppTheme.error,
+          ),
+        );
+      }
     }
   }
 
@@ -105,17 +136,16 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               onTap: () => _showImagePicker(),
               child: Container(
                 width: double.infinity,
-                height: 280,
+                height: 300,
                 decoration: BoxDecoration(
                   color: AppTheme.bgCard,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: AppTheme.purple.withValues(alpha: 0.3),
-                    width: 2,
-                    style: _imageBase64 == null
-                        ? BorderStyle.solid
-                        : BorderStyle.none,
-                  ),
+                  border: _imageBase64 == null
+                      ? Border.all(
+                          color: AppTheme.purple.withValues(alpha: 0.4),
+                          width: 2,
+                        )
+                      : null,
                 ),
                 child: _imageBase64 != null
                     ? ClipRRect(
@@ -151,9 +181,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                             ),
                           ),
                           const SizedBox(height: 8),
-                          const Text(
-                            'Galeria ou câmera',
-                            style: TextStyle(
+                          Text(
+                            kIsWeb ? 'Selecionar arquivo' : 'Galeria ou câmera',
+                            style: const TextStyle(
                               color: AppTheme.textMuted,
                               fontSize: 13,
                             ),
@@ -194,7 +224,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            // Info
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -218,7 +247,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             ),
             const SizedBox(height: 24),
             GradientButton(
-              label: 'Publicar foto',
+              label: _loading ? 'Publicando...' : 'Publicar foto',
               icon: Icons.cloud_upload_rounded,
               loading: _loading,
               onPressed: _imageBase64 != null ? _publish : null,
@@ -230,6 +259,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 
   void _showImagePicker() {
+    // No web, vai direto para galeria (câmera não funciona no browser)
+    if (kIsWeb) {
+      _pickImage(ImageSource.gallery);
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
       backgroundColor: AppTheme.bgCard,

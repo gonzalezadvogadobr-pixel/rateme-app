@@ -13,7 +13,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _currentIndex = 0;
+  // 0=Feed, 1=+ (CreatePost – não é tela), 2=Ranking, 3=Perfil
+  // _screenIndex mapeia para as 3 telas reais
+  int _navIndex = 0; // índice da barra de navegação
+  int _screenIndex = 0; // índice da tela no IndexedStack
 
   final List<Widget> _screens = const [
     FeedScreen(),
@@ -21,11 +24,31 @@ class _HomeScreenState extends State<HomeScreen> {
     ProfileScreen(),
   ];
 
+  void _onTap(int i) {
+    if (i == 1) {
+      // Botão "+" → abre CreatePost como rota separada
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const CreatePostScreen()),
+      );
+      return;
+    }
+    int screenIdx;
+    if (i == 0) { screenIdx = 0; }      // Feed
+    else if (i == 2) { screenIdx = 1; } // Ranking
+    else { screenIdx = 2; }              // Perfil (i==3)
+
+    setState(() {
+      _navIndex = i;
+      _screenIndex = screenIdx;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(
-        index: _currentIndex,
+        index: _screenIndex,
         children: _screens,
       ),
       bottomNavigationBar: Container(
@@ -35,23 +58,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (i) {
-            if (i == 1) {
-              // Botão "+" — Criar post
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const CreatePostScreen()),
-              );
-              return;
-            }
-            // Mapear índices: 0=Feed, 1=skip(+), 2=Ranking → índice real, 3=Perfil → 2
-            setState(() {
-              if (i == 0) { _currentIndex = 0; }
-              else if (i == 2) { _currentIndex = 1; }
-              else if (i == 3) { _currentIndex = 2; }
-            });
-          },
+          currentIndex: _navIndex,
+          onTap: _onTap,
           items: [
             const BottomNavigationBarItem(
               icon: Icon(Icons.home_outlined),
