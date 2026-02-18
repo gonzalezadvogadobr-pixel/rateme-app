@@ -4,15 +4,16 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
+import 'image_storage.dart';
 
 class DatabaseService extends ChangeNotifier {
-  static const _kUsers         = 'users_v1';
-  static const _kPosts         = 'posts_v1';
-  static const _kPins          = 'pins_v1';
-  static const _kComments      = 'comments_v1';
-  static const _kNotifications = 'notifications_v1';
-  static const _kFollows       = 'follows_v1';
-  static const _kCurrentUser   = 'current_user_v1';
+  static const _kUsers         = 'users_v2';
+  static const _kPosts         = 'posts_v2';   // sem imageBase64 — fica no IndexedDB
+  static const _kPins          = 'pins_v2';
+  static const _kComments      = 'comments_v2';
+  static const _kNotifications = 'notifications_v2';
+  static const _kFollows       = 'follows_v2';
+  static const _kCurrentUser   = 'current_user_v2';
 
   final _uuid = const Uuid();
   SharedPreferences? _prefs;
@@ -45,6 +46,8 @@ class DatabaseService extends ChangeNotifier {
     if (uid != null) {
       try { _currentUser = _users.firstWhere((u) => u.id == uid); } catch (_) {}
     }
+    // Carregar imagens do IndexedDB para cada post
+    await _loadPostImages();
     notifyListeners();
   }
 
@@ -57,6 +60,23 @@ class DatabaseService extends ChangeNotifier {
     _follows       = _loadList(_kFollows,       (j) => Follow.fromJson(j));
   }
 
+  /// Carrega as imagens do IndexedDB e injeta nos posts correspondentes.
+  /// Posts com imageBase64 = 'idb:<id>' buscam a imagem no IndexedDB.
+  Future<void> _loadPostImages() async {
+    bool changed = false;
+    for (final post in _posts) {
+      if (post.imageBase64.startsWith('idb:')) {
+        final key = post.imageBase64.substring(4); // remove 'idb:'
+        final b64 = await ImageStorage.loadBase64(key);
+        if (b64 != null && b64.isNotEmpty) {
+          post.imageBase64 = b64;
+          changed = true;
+        }
+      }
+    }
+    if (changed) notifyListeners();
+  }
+
   List<T> _loadList<T>(String key, T Function(Map<String,dynamic>) fromJson) {
     final raw = _prefs?.getString(key);
     if (raw == null) return [];
@@ -66,9 +86,36 @@ class DatabaseService extends ChangeNotifier {
     } catch (_) { return []; }
   }
 
+  /// Salva metadados no SharedPreferences.
+  /// Para posts: substitui imageBase64 pelo ponteiro 'idb:<id>' antes de salvar.
   Future<void> _save(String key, List items) async {
     try {
-      final json = jsonEncode(items.map((e) => e.toJson()).toList());
+      List<Map<String, dynamic>> jsonList;
+      if (key == _kPosts) {
+        // Salva posts sem as imagens grandes — usa referência 'idb:<id>'
+        jsonList = (items as List<Post>).map((p) {
+          final map = p.toJson();
+          // Se a imageBase64 é uma imagem real (não demo e não já é ponteiro)
+          if (!map['imageBase64'].toString().startsWith('demo:') &&
+              !map['imageBase64'].toString().startsWith('idb:') &&
+              map['imageBase64'].toString().length > 100) {
+            map['imageBase64'] = 'idb:${p.id}';
+          }
+          return map;
+        }).toList();
+      } else if (key == _kUsers) {
+        // Salva usuários sem avatars grandes
+        jsonList = (items as List<AppUser>).map((u) {
+          final map = u.toJson();
+          if ((map['avatarBase64'] ?? '').toString().length > 100) {
+            map['avatarBase64'] = 'idb:avatar_${u.id}';
+          }
+          return map;
+        }).toList();
+      } else {
+        jsonList = items.map((e) => e.toJson() as Map<String, dynamic>).toList();
+      }
+      final json = jsonEncode(jsonList);
       await _prefs?.setString(key, json);
     } catch (e) {
       if (kDebugMode) debugPrint('_save erro [$key]: $e');
@@ -108,6 +155,13 @@ class DatabaseService extends ChangeNotifier {
       if (user.passwordHash != _hash(password)) return 'Senha incorreta.';
       _currentUser = user;
       await _prefs?.setString(_kCurrentUser, user.id);
+      // Carregar avatar do IndexedDB se necessário
+      final av = _currentUser!.avatarBase64;
+      if (av != null && av.startsWith('idb:')) {
+        final key = av.substring(4);
+        final b64 = await ImageStorage.loadBase64(key);
+        if (b64 != null) _currentUser!.avatarBase64 = b64;
+      }
       notifyListeners();
       return null;
     } catch (_) {
@@ -145,7 +199,12 @@ class DatabaseService extends ChangeNotifier {
     if (name != null)            { _currentUser!.name = name; }
     if (bio != null)             { _currentUser!.bio = bio; }
     if (allowPublicPins != null) { _currentUser!.allowPublicPinsOnMyPosts = allowPublicPins; }
-    if (avatarBytes != null)     { _currentUser!.avatarBase64 = base64Encode(avatarBytes); }
+    if (avatarBytes != null) {
+      final b64 = base64Encode(avatarBytes);
+      _currentUser!.avatarBase64 = b64;
+      // Salva avatar no IndexedDB
+      await ImageStorage.saveBase64('avatar_${_currentUser!.id}', b64);
+    }
 
     final idx = _users.indexWhere((u) => u.id == _currentUser!.id);
     if (idx != -1) _users[idx] = _currentUser!;
@@ -200,24 +259,24 @@ class DatabaseService extends ChangeNotifier {
     required String caption,
   }) async {
     final pid = _uuid.v4();
-    // Codifica em base64 — já limitado a 800KB pelo create_post_screen
     final imgB64 = base64Encode(imageBytes);
+
+    // Salva imagem no IndexedDB (sem limite de tamanho)
+    await ImageStorage.saveBase64(pid, imgB64);
+
     final post = Post(
       id: pid,
       ownerId: _currentUser!.id,
       ownerName: _currentUser!.name,
       ownerAvatarBase64: _currentUser!.avatarBase64,
-      imageBase64: imgB64,
+      imageBase64: imgB64,   // na memória fica o base64 completo
       caption: caption,
       createdAt: DateTime.now(),
     );
     _posts.insert(0, post);
-    // Tenta salvar; se falhar (localStorage cheio), mantém em memória
-    try {
-      await _save(_kPosts, _posts);
-    } catch (e) {
-      if (kDebugMode) debugPrint('createPost save erro: $e');
-    }
+
+    // No SharedPreferences salva o ponteiro 'idb:<pid>' (pouco espaço)
+    await _save(_kPosts, _posts);
     notifyListeners();
     return post;
   }
@@ -226,6 +285,7 @@ class DatabaseService extends ChangeNotifier {
     _posts.removeWhere((p) => p.id == postId);
     _pins.removeWhere((p) => p.postId == postId);
     _comments.removeWhere((c) => c.postId == postId);
+    await ImageStorage.delete(postId);   // remove imagem do IndexedDB
     await _save(_kPosts, _posts);
     await _save(_kPins, _pins);
     await _save(_kComments, _comments);
@@ -491,6 +551,7 @@ class DatabaseService extends ChangeNotifier {
       Follow(followerId: 'demo-3', followingId: 'demo-1', createdAt: DateTime.now()),
     ];
 
+    // Posts de demo usam imageBase64 com prefixo 'demo:' (renderizados como gradiente)
     final p1 = Post(id: 'post-1', ownerId: 'demo-1', ownerName: 'Ana Silva',
         imageBase64: 'demo:7C3AED:EC4899:1', caption: 'Meu look favorito ✨',
         createdAt: DateTime.now().subtract(const Duration(hours: 5)),

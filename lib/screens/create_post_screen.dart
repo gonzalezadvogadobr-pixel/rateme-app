@@ -30,26 +30,15 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      // Comprime automaticamente para caber no localStorage (~1MB base64)
+      // Aceita qualquer foto — imagens são salvas no IndexedDB (sem limite de tamanho)
       final file = await _picker.pickImage(
         source: source,
-        maxWidth: 1080,
-        maxHeight: 1080,
-        imageQuality: 75,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 85,
       );
       if (file == null) return;
-      Uint8List bytes = await file.readAsBytes();
-
-      // Se ainda estiver grande, recomprime com qualidade menor
-      if (bytes.lengthInBytes > 700 * 1024) {
-        final smaller = await _picker.pickImage(
-          source: source,
-          maxWidth: 720,
-          maxHeight: 720,
-          imageQuality: 55,
-        );
-        if (smaller != null) bytes = await smaller.readAsBytes();
-      }
+      final bytes = await file.readAsBytes();
 
       setState(() {
         _imageBytes = bytes;
