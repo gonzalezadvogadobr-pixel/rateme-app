@@ -418,8 +418,8 @@ class DatabaseService extends ChangeNotifier {
     required bool isPublic,
   }) async {
     final uid = _currentUser!.id;
-    if (getPinCountForUserOnPost(postId, uid) >= 10) {
-      return 'Você já atingiu o limite de 10 pins nesta foto.';
+    if (getPinCountForUserOnPost(postId, uid) >= 5) {
+      return 'Você já atingiu o limite de 5 pins nesta foto.';
     }
     if (targetLabel.trim().isEmpty) return 'Informe um título/alvo para o pin.';
 

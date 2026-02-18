@@ -37,7 +37,7 @@ class _FeedScreenState extends State<FeedScreen> {
           shaderCallback: (bounds) =>
               AppTheme.gradientPurplePink.createShader(bounds),
           child: Text(
-            'RateMe',
+            'PinZap',
             style: GoogleFonts.dmSans(
               fontSize: 26,
               fontWeight: FontWeight.w800,

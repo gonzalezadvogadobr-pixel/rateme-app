@@ -191,7 +191,7 @@ class _AuthScreenState extends State<AuthScreen>
         const SizedBox(height: 18),
         // Nome do app
         const Text(
-          'RateMe',
+          'PinZap',
           style: TextStyle(
             fontSize: 36,
             fontWeight: FontWeight.w900,
@@ -201,7 +201,7 @@ class _AuthScreenState extends State<AuthScreen>
         ),
         const SizedBox(height: 6),
         Text(
-          'Avalie fotos com precisão',
+          'Avalie. Marque. Zap!',
           style: TextStyle(
             fontSize: 14,
             color: Colors.white.withValues(alpha: 0.85),

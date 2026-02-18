@@ -47,7 +47,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       final isOwner = db.currentUser?.id == post.ownerId;
       final myPinCount =
           db.getPinCountForUserOnPost(widget.postId, db.currentUser!.id);
-      final canAddPin = myPinCount < 10;
+      final canAddPin = myPinCount < 5;
 
       return Scaffold(
         backgroundColor: AppTheme.bgPrimary,
@@ -110,7 +110,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 backgroundColor: AppTheme.bgSurface,
                 icon: const Icon(Icons.push_pin_rounded,
                     color: AppTheme.textMuted),
-                label: const Text('Limite atingido (10)',
+                label: const Text('Limite atingido (5)',
                     style: TextStyle(color: AppTheme.textMuted)),
               ),
       );
@@ -413,7 +413,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   size: 14, color: AppTheme.textMuted),
               const SizedBox(width: 4),
               Text(
-                'Seus pins: $myPinCount/10',
+                'Seus pins: $myPinCount/5',
                 style: const TextStyle(
                     color: AppTheme.textMuted, fontSize: 12),
               ),

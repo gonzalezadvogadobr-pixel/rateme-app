@@ -46,18 +46,18 @@ void main() async {
   runApp(
     ChangeNotifierProvider<DatabaseService>(
       create: (_) => db,
-      child: const RateMeApp(),
+      child: const PinZapApp(),
     ),
   );
 }
 
-class RateMeApp extends StatelessWidget {
-  const RateMeApp({super.key});
+class PinZapApp extends StatelessWidget {
+  const PinZapApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'RateMe',
+      title: 'PinZap',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       home: const _AppGate(),

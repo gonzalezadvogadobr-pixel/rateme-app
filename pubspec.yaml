@@ -1,5 +1,5 @@
-name: pin_score
-description: RateMe - Avalie fotos com pinos interativos
+name: pin_zap
+description: PinZap - Avalie. Marque. Zap!
 publish_to: 'none'
 version: 1.0.0+1
 
