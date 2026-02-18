@@ -34,9 +34,9 @@ void main() async {
     DeviceOrientation.portraitDown,
   ]);
 
-  // Se Firebase falhou, mostra tela de erro em vez de tela branca
+  // Se Firebase falhou, mostra tela com o erro REAL para diagnóstico
   if (firebaseError != null) {
-    runApp(_FirebaseErrorApp(error: firebaseError));
+    runApp(_FirebaseErrorApp(error: firebaseError, showDetails: true));
     return;
   }
 
@@ -87,10 +87,10 @@ class _AppGate extends StatelessWidget {
   }
 }
 
-// Tela de erro — exibe mensagem clara se Firebase não inicializar
 class _FirebaseErrorApp extends StatelessWidget {
   final String error;
-  const _FirebaseErrorApp({required this.error});
+  final bool showDetails;
+  const _FirebaseErrorApp({required this.error, this.showDetails = false});
 
   @override
   Widget build(BuildContext context) {
@@ -110,36 +110,31 @@ class _FirebaseErrorApp extends StatelessWidget {
                 const Text(
                   'Erro ao conectar com o servidor',
                   style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
-                const Text(
-                  'Verifique sua conexão com a internet e tente novamente.',
-                  style: TextStyle(color: Colors.white60, fontSize: 14),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 32),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    // Recarrega a página no web
-                    // ignore: undefined_prefixed_name
-                    // ignore: avoid_web_libraries_in_flutter
-                    // dart:html não disponível — orientar o usuário
-                  },
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Recarregue a página (F5)'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF7C3AED),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                // Mostrar erro real para diagnóstico
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.withValues(alpha: 0.4)),
                   ),
+                  child: SelectableText(
+                    error,
+                    style: const TextStyle(color: Colors.red, fontSize: 12),
+                    textAlign: TextAlign.left,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Recarregue a página (F5) para tentar novamente.',
+                  style: TextStyle(color: Colors.white60, fontSize: 13),
+                  textAlign: TextAlign.center,
                 ),
               ],
             ),

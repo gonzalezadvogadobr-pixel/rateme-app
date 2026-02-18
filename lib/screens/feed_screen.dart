@@ -22,118 +22,175 @@ class _FeedScreenState extends State<FeedScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<DatabaseService>(builder: (context, db, _) {
-      final allPosts      = db.getAllFeedPosts();
-      final feedPosts     = _showFollowingOnly ? db.getFeedPosts() : allPosts;
-      final unread        = db.unreadNotifCount;
-      final hasFollowing  = db.followingIds(db.currentUser?.id ?? '').isNotEmpty;
+    final db = context.watch<DatabaseService>();
+    final unread = db.unreadNotifCount;
+    final hasFollowing =
+        db.followingIds(db.currentUser?.id ?? '').isNotEmpty;
+    final followedIds =
+        db.followingIds(db.currentUser?.id ?? '').toSet();
+    final myId = db.currentUser?.id ?? '';
 
-      return Scaffold(
-        backgroundColor: AppTheme.bgPrimary,
-        appBar: AppBar(
-          title: ShaderMask(
-            shaderCallback: (bounds) =>
-                AppTheme.gradientPurplePink.createShader(bounds),
-            child: Text(
-              'RateMe',
-              style: GoogleFonts.dmSans(
-                fontSize: 26,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.5,
-                color: Colors.white,
-              ),
+    return Scaffold(
+      backgroundColor: AppTheme.bgPrimary,
+      appBar: AppBar(
+        title: ShaderMask(
+          shaderCallback: (bounds) =>
+              AppTheme.gradientPurplePink.createShader(bounds),
+          child: Text(
+            'RateMe',
+            style: GoogleFonts.dmSans(
+              fontSize: 26,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+              color: Colors.white,
             ),
           ),
-          actions: [
-            // Busca
-            IconButton(
-              icon: const Icon(Icons.search_rounded,
-                  color: AppTheme.textSecondary),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SearchScreen()),
-              ),
-            ),
-            // Notificações com badge
-            Stack(
-              alignment: Alignment.center,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.notifications_outlined,
-                      color: AppTheme.textSecondary),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const NotificationsScreen()),
-                  ),
-                ),
-                if (unread > 0)
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: const BoxDecoration(
-                        color: AppTheme.pink,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: Text(
-                          unread > 9 ? '9+' : '$unread',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-          bottom: hasFollowing
-              ? PreferredSize(
-                  preferredSize: const Size.fromHeight(42),
-                  child: Container(
-                    color: AppTheme.bgSecondary,
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Row(
-                      children: [
-                        _TabChip(
-                          label: 'Todos',
-                          active: !_showFollowingOnly,
-                          onTap: () =>
-                              setState(() => _showFollowingOnly = false),
-                        ),
-                        const SizedBox(width: 8),
-                        _TabChip(
-                          label: 'Seguindo',
-                          active: _showFollowingOnly,
-                          onTap: () =>
-                              setState(() => _showFollowingOnly = true),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : null,
         ),
-        body: feedPosts.isEmpty
-            ? _buildEmpty(context)
-            : RefreshIndicator(
-                color: AppTheme.purple,
-                backgroundColor: Colors.white,
-                onRefresh: () async {},
-                child: ListView.builder(
-                  padding: const EdgeInsets.only(top: 8, bottom: 80),
-                  itemCount: feedPosts.length,
-                  itemBuilder: (context, index) =>
-                      _PostCard(post: feedPosts[index]),
+        actions: [
+          // Busca
+          IconButton(
+            icon: const Icon(Icons.search_rounded,
+                color: AppTheme.textSecondary),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SearchScreen()),
+            ),
+          ),
+          // Notificações com badge
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notifications_outlined,
+                    color: AppTheme.textSecondary),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const NotificationsScreen()),
                 ),
               ),
-      );
-    });
+              if (unread > 0)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    width: 16,
+                    height: 16,
+                    decoration: const BoxDecoration(
+                      color: AppTheme.pink,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        unread > 9 ? '9+' : '$unread',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+        bottom: hasFollowing
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(42),
+                child: Container(
+                  color: AppTheme.bgSecondary,
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Row(
+                    children: [
+                      _TabChip(
+                        label: 'Todos',
+                        active: !_showFollowingOnly,
+                        onTap: () =>
+                            setState(() => _showFollowingOnly = false),
+                      ),
+                      const SizedBox(width: 8),
+                      _TabChip(
+                        label: 'Seguindo',
+                        active: _showFollowingOnly,
+                        onTap: () =>
+                            setState(() => _showFollowingOnly = true),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : null,
+      ),
+      // ── StreamBuilder: ouve o Firestore em tempo real ──────────────────────
+      body: StreamBuilder<List<Post>>(
+        stream: db.postsStream,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              !snapshot.hasData) {
+            return const Center(
+              child: CircularProgressIndicator(color: AppTheme.purple),
+            );
+          }
+
+          if (snapshot.hasError) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.wifi_off_rounded,
+                      size: 64, color: AppTheme.textMuted),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Erro ao carregar feed.\nVerifique sua conexão.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 16),
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => setState(() {}),
+                    child: const Text('Tentar novamente'),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          List<Post> allPosts = snapshot.data ?? [];
+
+          // Filtro por seguindo
+          List<Post> feedPosts;
+          if (_showFollowingOnly && followedIds.isNotEmpty) {
+            final relevant = {...followedIds, myId};
+            feedPosts =
+                allPosts.where((p) => relevant.contains(p.ownerId)).toList();
+            if (feedPosts.isEmpty) feedPosts = allPosts;
+          } else {
+            feedPosts = allPosts;
+          }
+
+          if (feedPosts.isEmpty) {
+            return _buildEmpty(context);
+          }
+
+          return RefreshIndicator(
+            color: AppTheme.purple,
+            backgroundColor: Colors.white,
+            onRefresh: () async {
+              // O stream já cuida das atualizações,
+              // mas forçar um setState garante UI refresh
+              setState(() {});
+            },
+            child: ListView.builder(
+              padding: const EdgeInsets.only(top: 8, bottom: 80),
+              itemCount: feedPosts.length,
+              itemBuilder: (context, index) =>
+                  _PostCard(post: feedPosts[index]),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Widget _buildEmpty(BuildContext context) {
@@ -271,7 +328,7 @@ class _PostCard extends StatelessWidget {
                 ],
               ),
             ),
-            // Imagem — 50% mais alta que antes (3:4 portrait em vez de 4:3)
+            // Imagem
             AspectRatio(
               aspectRatio: 4 / 6,
               child: AppImage(imageData: post.imageBase64, fit: BoxFit.cover),

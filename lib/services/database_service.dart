@@ -22,6 +22,9 @@ class DatabaseService extends ChangeNotifier {
   List<AppUser>         _users         = [];
   bool                  _isLoading     = true;
 
+  // Stream subscriptions para atualizações em tempo real
+  Stream<List<Post>>? _postsStream;
+
   AppUser?              get currentUser       => _currentUser;
   bool                  get isLoggedIn        => _currentUser != null;
   bool                  get isLoading         => _isLoading;
@@ -38,7 +41,6 @@ class DatabaseService extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     try {
-      // Verificar se já há usuário logado no Firebase Auth
       final firebaseUser = _auth.currentUser;
       if (firebaseUser != null) {
         await _loadCurrentUser(firebaseUser.uid);
@@ -215,7 +217,6 @@ class DatabaseService extends ChangeNotifier {
       updates['allowPublicPinsOnMyPosts'] = allowPublicPins;
     }
     if (avatarBytes != null) {
-      // Upload avatar para Firebase Storage
       final url = await _uploadImage(
         'avatars/${_currentUser!.id}.jpg', avatarBytes,
       );
@@ -230,7 +231,6 @@ class DatabaseService extends ChangeNotifier {
     final idx = _users.indexWhere((u) => u.id == _currentUser!.id);
     if (idx != -1) _users[idx] = _currentUser!;
 
-    // Propagar nome/avatar nos posts
     if (name != null || avatarBytes != null) {
       final batch = _db.batch();
       for (final p in _posts.where((p) => p.ownerId == _currentUser!.id)) {
@@ -250,11 +250,14 @@ class DatabaseService extends ChangeNotifier {
   Future<String?> _uploadImage(String path, Uint8List bytes) async {
     try {
       final ref = _storage.ref().child(path);
-      final task = await ref.putData(
+      await ref.putData(
         bytes,
         SettableMetadata(contentType: 'image/jpeg'),
       );
-      return await task.ref.getDownloadURL();
+      // Usar URL pública sem token (bucket tem IAM público)
+      final bucket = _storage.bucket;
+      final encodedPath = Uri.encodeComponent(path);
+      return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/$encodedPath?alt=media';
     } catch (e) {
       if (kDebugMode) debugPrint('[DB] _uploadImage erro: $e');
       // Fallback: salvar como base64 se Storage falhar
@@ -297,6 +300,21 @@ class DatabaseService extends ChangeNotifier {
   }
 
   // ── POSTS ───────────────────────────────────────────────────────────────────
+
+  /// Stream em tempo real dos posts — usado pelo FeedScreen.
+  /// Cada vez que um post é criado/editado no Firestore, o stream emite
+  /// a lista atualizada e o feed reconstrói automaticamente.
+  Stream<List<Post>> get postsStream {
+    _postsStream ??= _db
+        .collection('posts')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => Post.fromJson({...d.data(), 'id': d.id}))
+            .toList());
+    return _postsStream!;
+  }
+
   Future<Post> createPost({
     required Uint8List imageBytes,
     required String caption,
@@ -315,7 +333,11 @@ class DatabaseService extends ChangeNotifier {
       caption: caption,
       createdAt: DateTime.now(),
     );
+
+    // Salva no Firestore — o stream do feed detecta automaticamente
     await _db.collection('posts').doc(pid).set(post.toFirestore());
+
+    // Atualiza lista local também para outras telas (perfil, ranking)
     _posts.insert(0, post);
     notifyListeners();
     return post;
@@ -327,13 +349,11 @@ class DatabaseService extends ChangeNotifier {
     _comments.removeWhere((c) => c.postId == postId);
     final batch = _db.batch();
     batch.delete(_db.collection('posts').doc(postId));
-    // Deletar pins e comentários do post
     final pinsSnap = await _db.collection('pins').where('postId', isEqualTo: postId).get();
     for (final d in pinsSnap.docs) batch.delete(d.reference);
     final commSnap = await _db.collection('comments').where('postId', isEqualTo: postId).get();
     for (final d in commSnap.docs) batch.delete(d.reference);
     await batch.commit();
-    // Tentar deletar imagem do Storage
     try { await _storage.ref('posts/$postId.jpg').delete(); } catch (_) {}
     notifyListeners();
   }
@@ -598,6 +618,39 @@ class DatabaseService extends ChangeNotifier {
       await _db.collection('notifications').doc(id).update({'isRead': true});
     }
     notifyListeners();
+  }
+
+  // Exclui a conta do usuário atual
+  Future<void> deleteAccount() async {
+    if (_currentUser == null) return;
+    final uid = _currentUser!.id;
+    try {
+      // 1. Deletar posts e imagens
+      final userPosts = _posts.where((p) => p.ownerId == uid).toList();
+      for (final post in userPosts) {
+        await deletePost(post.id);
+      }
+      // 2. Deletar dados do usuário no Firestore
+      final batch = _db.batch();
+      batch.delete(_db.collection('users').doc(uid));
+      final followsSnap = await _db.collection('follows')
+          .where('followerId', isEqualTo: uid).get();
+      for (final d in followsSnap.docs) batch.delete(d.reference);
+      final followedSnap = await _db.collection('follows')
+          .where('followingId', isEqualTo: uid).get();
+      for (final d in followedSnap.docs) batch.delete(d.reference);
+      final notifsSnap = await _db.collection('notifications')
+          .where('recipientId', isEqualTo: uid).get();
+      for (final d in notifsSnap.docs) batch.delete(d.reference);
+      await batch.commit();
+      // 3. Deletar do Firebase Auth
+      await _auth.currentUser?.delete();
+      // 4. Limpar estado local
+      await logout();
+    } catch (e) {
+      if (kDebugMode) debugPrint('[DB] deleteAccount erro: $e');
+      rethrow;
+    }
   }
 
   // ── REFRESH ───────────────────────────────────────────────────────────────────

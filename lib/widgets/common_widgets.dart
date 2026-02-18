@@ -29,10 +29,17 @@ class AppImage extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget img;
 
-    // Prioridade 1: URL Firebase Storage
-    if (_isHttpUrl(imageUrl)) {
+    // Se imageData contém uma URL (Firebase Storage), usa ela como imageUrl
+    final effectiveUrl = _isHttpUrl(imageUrl)
+        ? imageUrl
+        : _isHttpUrl(imageData)
+            ? imageData
+            : null;
+
+    // Prioridade 1: URL Firebase Storage (de imageUrl ou imageData)
+    if (effectiveUrl != null) {
       img = Image.network(
-        imageUrl!,
+        effectiveUrl,
         width: width,
         height: height,
         fit: fit,
