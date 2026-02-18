@@ -240,12 +240,15 @@ class DatabaseService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── IMAGEM: comprime bytes e converte para base64 data URI ───────────────────
-  // Limita a imagem a ~700px e qualidade 70% para caber no Firestore (< 1MB doc)
+  // ── IMAGEM: converte bytes já comprimidos para base64 data URI ───────────────
+  // A compressão real é feita na CreatePostScreen (dart:ui, máx 700KB)
   String _toBase64DataUri(Uint8List bytes) {
-    // Converte direto para base64 — a compressão já foi feita no ImagePicker
-    // (maxWidth/maxHeight 1080, quality 72 definidos na tela de criar post)
-    return 'data:image/jpeg;base64,${base64Encode(bytes)}';
+    // Detecta PNG pelos primeiros bytes (magic number: 0x89 0x50 0x4E 0x47)
+    final isPng = bytes.length > 4 &&
+        bytes[0] == 0x89 && bytes[1] == 0x50 &&
+        bytes[2] == 0x4E && bytes[3] == 0x47;
+    final mime = isPng ? 'image/png' : 'image/jpeg';
+    return 'data:$mime;base64,${base64Encode(bytes)}';
   }
 
   // ── FOLLOWS ──────────────────────────────────────────────────────────────────

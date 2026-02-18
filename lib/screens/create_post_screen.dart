@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +8,62 @@ import 'package:image_picker/image_picker.dart';
 import '../services/database_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Comprime Uint8List usando dart:ui para garantir que caiba no Firestore.
+// Redimensiona para maxDim e aplica qualidade/tamanho até caber em maxBytes.
+// ─────────────────────────────────────────────────────────────────────────────
+Future<Uint8List> _compressImage(
+  Uint8List input, {
+  int maxDim = 800,
+  int maxBytes = 700 * 1024, // 700 KB → base64 ≈ 933 KB, abaixo do 1 MB do Firestore
+}) async {
+  // Decodifica a imagem (sem targetMax* que não existem nesta versão do Flutter)
+  final codec = await ui.instantiateImageCodec(input);
+  final frame = await codec.getNextFrame();
+  final srcImage = frame.image;
+
+  // Calcula dimensões respeitando o limite maxDim
+  final w = srcImage.width;
+  final h = srcImage.height;
+  int targetW = w;
+  int targetH = h;
+  if (w > maxDim || h > maxDim) {
+    if (w >= h) {
+      targetW = maxDim;
+      targetH = (h * maxDim / w).round();
+    } else {
+      targetH = maxDim;
+      targetW = (w * maxDim / h).round();
+    }
+  }
+
+  // Redimensiona via Canvas
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  final paint = Paint()..filterQuality = FilterQuality.medium;
+  canvas.drawImageRect(
+    srcImage,
+    Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+    Rect.fromLTWH(0, 0, targetW.toDouble(), targetH.toDouble()),
+    paint,
+  );
+  final picture = recorder.endRecording();
+  final resized = await picture.toImage(targetW, targetH);
+
+  // Exporta como PNG (dart:ui não suporta JPEG nativo na web)
+  final byteData = await resized.toByteData(format: ui.ImageByteFormat.png);
+  if (byteData == null) return input;
+
+  final result = byteData.buffer.asUint8List();
+
+  // Se ainda for grande demais, tenta redimensionar mais agressivamente
+  if (result.length > maxBytes && maxDim > 400) {
+    return _compressImage(input, maxDim: (maxDim * 0.7).round(), maxBytes: maxBytes);
+  }
+
+  return result;
+}
 
 class CreatePostScreen extends StatefulWidget {
   const CreatePostScreen({super.key});
@@ -20,6 +77,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   Uint8List? _imageBytes;
   String? _imageBase64;
   bool _loading = false;
+  bool _compressing = false;
+  String? _sizeInfo;
   final _picker = ImagePicker();
 
   @override
@@ -30,22 +89,33 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      // Comprime para 1080px e qualidade 72% — base64 resultante ~150-300KB
-      // que cabe tranquilamente no limite de 1MB do Firestore
+      // Passo 1: ImagePicker faz uma compressão inicial (1200px, qualidade 80)
       final file = await _picker.pickImage(
         source: source,
-        maxWidth: 1080,
-        maxHeight: 1080,
-        imageQuality: 72,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 80,
       );
       if (file == null) return;
-      final bytes = await file.readAsBytes();
+
+      setState(() => _compressing = true);
+
+      final rawBytes = await file.readAsBytes();
+
+      // Passo 2: compressão dart:ui — garante tamanho < 700KB (cabe no Firestore)
+      final compressed = await _compressImage(rawBytes);
+
+      final kb = (compressed.length / 1024).round();
+      final base64Str = base64Encode(compressed);
 
       setState(() {
-        _imageBytes = bytes;
-        _imageBase64 = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+        _imageBytes  = compressed;
+        _imageBase64 = 'data:image/png;base64,$base64Str';
+        _sizeInfo    = '${kb} KB';
+        _compressing = false;
       });
     } catch (e) {
+      setState(() => _compressing = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -105,7 +175,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         title: const Text('Criar Post'),
         actions: [
           TextButton(
-            onPressed: _loading ? null : _publish,
+            onPressed: (_loading || _compressing) ? null : _publish,
             child: const Text(
               'Publicar',
               style: TextStyle(
@@ -121,9 +191,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            // Preview da imagem
+            // ── Preview da imagem ──────────────────────────────────────────
             GestureDetector(
-              onTap: () => _showImagePicker(),
+              onTap: _compressing ? null : _showImagePicker,
               child: Container(
                 width: double.infinity,
                 height: 300,
@@ -137,53 +207,97 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                         )
                       : null,
                 ),
-                child: _imageBase64 != null
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: AppImage(
-                          imageData: _imageBase64!,
-                          fit: BoxFit.cover,
-                        ),
-                      )
-                    : Column(
+                child: _compressing
+                    // Comprimindo
+                    ? const Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Container(
-                            width: 80,
-                            height: 80,
-                            decoration: BoxDecoration(
-                              gradient: AppTheme.gradientPurplePink,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.add_photo_alternate_rounded,
-                              color: Colors.white,
-                              size: 40,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          const Text(
-                            'Toque para adicionar foto',
-                            style: TextStyle(
-                              color: AppTheme.textSecondary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
+                          CircularProgressIndicator(color: AppTheme.purple),
+                          SizedBox(height: 16),
                           Text(
-                            kIsWeb ? 'Selecionar arquivo' : 'Galeria ou câmera',
-                            style: const TextStyle(
-                              color: AppTheme.textMuted,
-                              fontSize: 13,
-                            ),
+                            'Otimizando imagem…',
+                            style: TextStyle(color: AppTheme.textSecondary),
                           ),
                         ],
-                      ),
+                      )
+                    : _imageBase64 != null
+                        // Preview com badge de tamanho
+                        ? Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: AppImage(
+                                  imageData: _imageBase64!,
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  height: 300,
+                                ),
+                              ),
+                              if (_sizeInfo != null)
+                                Positioned(
+                                  bottom: 8,
+                                  right: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.6),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      _sizeInfo!,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          )
+                        // Placeholder vazio
+                        : Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 80,
+                                height: 80,
+                                decoration: BoxDecoration(
+                                  gradient: AppTheme.gradientPurplePink,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.add_photo_alternate_rounded,
+                                  color: Colors.white,
+                                  size: 40,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              const Text(
+                                'Toque para adicionar foto',
+                                style: TextStyle(
+                                  color: AppTheme.textSecondary,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                kIsWeb
+                                    ? 'Selecionar arquivo'
+                                    : 'Galeria ou câmera',
+                                style: const TextStyle(
+                                  color: AppTheme.textMuted,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
               ),
             ),
-            // Botão trocar imagem
-            if (_imageBase64 != null) ...[
+
+            // ── Botão trocar imagem ────────────────────────────────────────
+            if (_imageBase64 != null && !_compressing) ...[
               const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -198,8 +312,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 ],
               ),
             ],
+
             const SizedBox(height: 20),
-            // Legenda
+
+            // ── Legenda ────────────────────────────────────────────────────
             TextField(
               controller: _captionCtrl,
               maxLines: 3,
@@ -236,11 +352,18 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               ),
             ),
             const SizedBox(height: 24),
+
+            // ── Botão publicar ─────────────────────────────────────────────
             GradientButton(
-              label: _loading ? 'Publicando...' : 'Publicar foto',
+              label: _loading
+                  ? 'Publicando...'
+                  : _compressing
+                      ? 'Otimizando...'
+                      : 'Publicar foto',
               icon: Icons.cloud_upload_rounded,
-              loading: _loading,
-              onPressed: _imageBase64 != null ? _publish : null,
+              loading: _loading || _compressing,
+              onPressed:
+                  _imageBase64 != null && !_compressing ? _publish : null,
             ),
           ],
         ),
@@ -249,12 +372,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 
   void _showImagePicker() {
-    // No web, vai direto para galeria (câmera não funciona no browser)
     if (kIsWeb) {
       _pickImage(ImageSource.gallery);
       return;
     }
-
     showModalBottomSheet(
       context: context,
       backgroundColor: AppTheme.bgCard,
@@ -278,8 +399,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               const SizedBox(height: 16),
               const Text(
                 'Selecionar imagem',
-                style: TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 16),
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
               ),
               const SizedBox(height: 16),
               ListTile(
