@@ -10,6 +10,13 @@ plugins {
     id("com.google.gms.google-services")
 }
 
+// Load signing properties
+val keyPropertiesFile = rootProject.file("key.properties")
+val keyProperties = Properties()
+if (keyPropertiesFile.exists()) {
+    keyProperties.load(FileInputStream(keyPropertiesFile))
+}
+
 android {
     namespace = "com.pinscore.rating"
     compileSdk = flutter.compileSdkVersion
@@ -24,6 +31,15 @@ android {
         jvmTarget = JavaVersion.VERSION_11.toString()
     }
 
+    signingConfigs {
+        create("release") {
+            keyAlias = keyProperties["keyAlias"] as String? ?: "release"
+            keyPassword = keyProperties["keyPassword"] as String? ?: ""
+            storeFile = keyProperties["storeFile"]?.let { file(rootProject.projectDir.path + "/" + (it as String)) }
+            storePassword = keyProperties["storePassword"] as String? ?: ""
+        }
+    }
+
     defaultConfig {
         applicationId = "com.pinscore.rating"
         minSdk = flutter.minSdkVersion
@@ -34,9 +50,9 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
