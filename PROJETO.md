@@ -1,18 +1,20 @@
-# 📌 PROJETO RateMe — Arquivo de Contexto
+# 📌 PROJETO PinZap — Arquivo de Contexto
 
 > **INSTRUÇÕES PARA O ASSISTENTE AI:**
 > Leia este arquivo inteiro antes de qualquer ação.
 > Ele contém todo o histórico, estado atual e próximos passos do projeto.
-> Após ler, confirme: *"Li o PROJETO.md. Estou pronto para continuar o RateMe de onde paramos."*
+> Após ler, confirme: *"Li o PROJETO.md. Estou pronto para continuar o PinZap de onde paramos."*
 
 ---
 
 ## 🎯 Visão Geral do App
 
-**Nome:** RateMe
+**Nome:** PinZap
 **Conceito:** Rede social onde usuários publicam fotos e outras pessoas avaliam partes específicas da foto usando "pins" interativos. Cada pin tem uma nota de 0 a 10, um título (ex: "Cabelo", "Roupa", "Expressão") e um comentário. A foto recebe uma nota média com base em todos os pins.
-**Slogan:** "Avalie fotos com pinos interativos"
+**Slogan:** "Avalie. Marque. Zap!"
 **Público-alvo:** Pessoas que querem feedback visual detalhado sobre fotos (moda, fitness, arte, etc.)
+**Package Android:** `com.pinscore.rating`
+**Nome interno (pubspec):** `pin_zap`
 
 ---
 
@@ -24,10 +26,13 @@
 
 > Para gerar um novo token quando necessário:
 > 1. Acesse: https://github.com/settings/tokens/new
-> 2. Note: "RateMe App", Expiration: 90 days
-> 3. Marque o escopo: **repo** (checkbox principal)
-> 4. Clique "Generate token" e copie o resultado (começa com ghp_...)
-> 5. Envie o token para o assistente no início da sessão
+> 2. Note: "PinZap Push", Expiration: 90 days
+> 3. Tipo: **Classic token**
+> 4. Marque o escopo: **repo** (checkbox principal)
+> 5. Clique "Generate token" e copie o resultado (começa com ghp_...)
+> 6. Envie o token para o assistente no início da sessão
+>
+> ⚠️ Token fine-grained (github_pat_...) NÃO funcionou — use sempre classic (ghp_...)
 
 ---
 
@@ -39,8 +44,10 @@
 | **Linguagem** | Dart 3.9.2 |
 | **Plataformas** | Android + Web (preview) |
 | **Estado** | Provider 6.1.5+1 |
-| **Banco local** | SharedPreferences (metadados) + IndexedDB (imagens) |
+| **Backend** | Firebase (Auth + Firestore) |
+| **Imagens** | Base64 salvo direto no Firestore |
 | **Package Android** | com.pinscore.rating |
+| **Projeto Firebase** | rateme-a1de6 |
 | **Pasta do projeto** | /home/user/flutter_app |
 
 ---
@@ -52,6 +59,9 @@ dependencies:
   flutter:
     sdk: flutter
   provider: 6.1.5+1
+  firebase_core: 3.6.0
+  firebase_auth: 5.3.1
+  cloud_firestore: 5.4.3
   shared_preferences: 2.5.3
   image_picker: 1.1.2
   uuid: 4.5.1
@@ -61,6 +71,9 @@ dependencies:
   google_fonts: 6.2.1
 ```
 
+> ⚠️ `firebase_storage` foi **removido intencionalmente** — imagens salvas como base64 no Firestore.
+> Não adicionar `firebase_storage` de volta sem planejamento cuidadoso (risco de CORS no web).
+
 ---
 
 ## 🗂️ Estrutura de Arquivos
@@ -68,19 +81,17 @@ dependencies:
 ```
 flutter_app/
 ├── lib/
-│   ├── main.dart                          # Entry point, Provider setup, AppGate
+│   ├── main.dart                          # Entry point, Provider setup, AppGate, init Firebase
+│   ├── firebase_options.dart              # Configuração Firebase (projeto rateme-a1de6)
 │   ├── models/
 │   │   └── models.dart                    # AppUser, Post, Pin, PostComment, AppNotification, Follow
 │   ├── services/
-│   │   ├── database_service.dart          # TODA a lógica de negócio (auth, posts, pins, etc.)
-│   │   ├── image_storage.dart             # Interface de armazenamento de imagens
-│   │   ├── image_storage_web.dart         # Implementação Web via IndexedDB (JS interop)
-│   │   └── image_storage_io.dart          # Implementação Mobile via arquivos locais
+│   │   └── database_service.dart          # TODA a lógica de negócio (auth, posts, pins, etc.)
 │   ├── screens/
 │   │   ├── auth_screen.dart               # Login + Cadastro (tela de entrada com logomarca)
 │   │   ├── home_screen.dart               # Scaffold principal com BottomNavigationBar
-│   │   ├── feed_screen.dart               # Feed de posts (todos / seguindo)
-│   │   ├── create_post_screen.dart        # Publicar nova foto
+│   │   ├── feed_screen.dart               # Feed de posts em tempo real (StreamBuilder)
+│   │   ├── create_post_screen.dart        # Publicar nova foto (com compressão dart:ui)
 │   │   ├── post_detail_screen.dart        # Detalhe do post + pins interativos + zoom
 │   │   ├── profile_screen.dart            # Perfil do usuário logado
 │   │   ├── ranking_screen.dart            # Ranking de posts por nota
@@ -96,7 +107,7 @@ flutter_app/
 │   │   └── rateme_logo.png                # Logomarca: pino dentro de círculo (roxo/rosa)
 │   └── images/                            # (pasta reservada para imagens futuras)
 ├── web/
-│   └── index.html                         # Inclui helpers JS para IndexedDB
+│   └── index.html                         # Bootstrap Flutter Web
 └── android/
     └── app/
         ├── build.gradle.kts               # applicationId = "com.pinscore.rating"
@@ -127,14 +138,15 @@ flutter_app/
 ## ⚙️ Funcionalidades Implementadas
 
 ### Autenticação
-- [x] Cadastro com nome, email, senha
+- [x] Cadastro com nome, email, senha (Firebase Auth)
 - [x] Login com email e senha
 - [x] Logout
 - [x] 3 contas demo: ana@demo.com, pedro@demo.com, mariana@demo.com (senha: 123456)
 
 ### Posts
-- [x] Publicar foto (qualquer tamanho — salva no IndexedDB)
+- [x] Publicar foto (comprimida automaticamente para < 700KB)
 - [x] Legenda opcional
+- [x] Feed em tempo real via Firestore Stream
 - [x] Feed geral e feed "seguindo"
 - [x] Deletar post
 
@@ -144,7 +156,7 @@ flutter_app/
 - [x] Nota de 0 a 10
 - [x] Comentário no pin
 - [x] Pin público ou privado
-- [x] Limite de 10 pins por usuário por foto
+- [x] **Limite de 5 pins por usuário por foto** ← atualizado (era 10)
 - [x] Editar e deletar pin
 - [x] Cálculo automático de nota média
 
@@ -173,74 +185,77 @@ flutter_app/
 
 ## 🗄️ Armazenamento Atual (IMPORTANTE)
 
-**Arquitetura híbrida — tudo LOCAL no dispositivo:**
+**Arquitetura Firebase — dados na nuvem, compartilhados entre todos os usuários:**
 
 | Dado | Onde fica |
 |------|-----------|
-| Metadados (posts, pins, users) | SharedPreferences (localStorage no web) |
-| Imagens de posts | IndexedDB (via JS interop no web) |
-| Imagens de avatares | IndexedDB (via JS interop no web) |
+| Autenticação (login/senha) | Firebase Auth |
+| Metadados (posts, pins, users, follows, notificações) | Firestore |
+| Imagens de posts | **Base64 no Firestore** (campo `imageBase64`) |
+| Imagens de avatares | **Base64 no Firestore** (campo `avatarBase64`) |
 
-**Limitação crítica:** É armazenamento LOCAL. Cada usuário vê apenas seus próprios dados.
-Não existe feed compartilhado entre dispositivos diferentes.
-**Isso precisa ser resolvido com Firebase (próximo passo).**
+**Detalhes da compressão de imagens:**
+- Etapa 1: ImagePicker limita a 1200px e qualidade 80%
+- Etapa 2: dart:ui redimensiona para máx. 800px, qualidade progressiva até caber em < 700KB
+- Resultado: fotos de 3–5MB ficam em ~150–400KB; cabe no limite do Firestore (1MB/doc)
+
+**Limitação:** Firestore tem limite de 1 MB por documento. Fotos muito grandes podem falhar.
+**Solução futura:** Migrar imagens para Firebase Storage (sem impacto nas contas ou dados existentes).
+
+**⚠️ Por que firebase_storage foi removido:**
+- Firebase Storage retornava URLs que o browser bloqueava por CORS
+- Solução temporária (e funcional): salvar como base64 direto no Firestore
+- Migração para Storage pode ser feita no futuro sem perda de dados
 
 ---
 
 ## 📋 Histórico de Decisões Importantes
 
-### Por que não usamos Firebase ainda?
-- Tentamos integrar Firebase em uma sessão anterior
-- A integração causou erros que quebraram o app
-- Decidimos reverter para a versão local funcional
-- **Próxima tentativa será com protocolo de segurança rigoroso (branch separada)**
+### Firebase integrado com sucesso (Junho/2025)
+- Auth, Firestore e feed em tempo real funcionando
+- `firebase_storage` removido por problema de CORS no web
+- Imagens salvas como base64 no Firestore funcionam corretamente
+- Domínio `sandbox.novita.ai` adicionado como "Authorized domain" no Firebase Console
 
-### Por que IndexedDB em vez de só SharedPreferences?
-- SharedPreferences usa localStorage do browser: limite de ~5MB
-- Uma foto base64 pode ter 500KB–1MB
-- Com 3–4 fotos o localStorage estourava silenciosamente
-- IndexedDB suporta centenas de MB
-- Solução: metadados no SharedPreferences + imagens no IndexedDB
+### Por que o nome mudou de RateMe para PinZap?
+- RateMe é nome muito genérico e possivelmente já usado
+- PinZap é mais original, memorável, e reflete a mecânica de "pins" do app
+- Slogan atualizado: "Avalie. Marque. Zap!"
+
+### Limite de pins reduzido de 10 para 5
+- Decisão do proprietário para tornar as avaliações mais seletivas e significativas
 
 ### Por que o tema é escuro?
 - Decisão estética do proprietário
 - Gradiente roxo→rosa é a identidade visual do app
 
+### Token GitHub
+- Token fine-grained (github_pat_...) NÃO funcionou (403 Forbidden)
+- Usar sempre token classic (ghp_...) com escopo `repo`
+
 ---
 
 ## 🚀 Próximos Passos (em ordem de prioridade)
 
-### ETAPA 1 — Firebase Backend (PRÓXIMO A FAZER)
-**Objetivo:** Transformar o app de local para rede social real na nuvem
+### ✅ ETAPA 1 — Firebase Backend — CONCLUÍDA
+- [x] Firebase Auth (email/senha)
+- [x] Firestore para posts, pins, comentários, usuários, follows, notificações
+- [x] Feed compartilhado entre todos os usuários
+- [x] Imagens salvas como base64 (firebase_storage removido por CORS)
 
-**Protocolo de segurança antes de começar:**
-1. `git tag v1.0-stable` — marcar versão estável atual
-2. `git checkout -b firebase-integration` — trabalhar em branch separada
-3. Gerar backup .tar.gz atualizado
-4. Só fazer merge na main quando 100% funcionando
-
-**O que implementar:**
-- [ ] Firebase Auth (email/senha)
-- [ ] Firestore para posts, pins, comentários, usuários, follows, notificações
-- [ ] Firebase Storage para imagens (substitui IndexedDB)
-- [ ] Manter todas as funcionalidades atuais
-- [ ] Feed compartilhado entre todos os usuários
-
-**Credenciais Firebase necessárias (proprietário deve fornecer):**
-- Arquivo `google-services.json` (Android)
-- Arquivo `firebase-admin-sdk.json` (para criar coleções iniciais)
-- Ou: criar novo projeto Firebase do zero em console.firebase.google.com
-
-### ETAPA 2 — Google Play Store
+### ETAPA 2 — Google Play Store (PRÓXIMO A FAZER)
 **Objetivo:** Publicar no Android
 
-**O que fazer:**
+**O que o assistente faz:**
+- [x] Criar política de privacidade (texto gerado)
 - [ ] Gerar AAB (Android App Bundle) assinado
-- [ ] Criar política de privacidade (assistente gera o texto)
-- [ ] Preparar screenshots (mínimo 2, ideal 8)
-- [ ] Escrever descrição do app
-- [ ] Proprietário: criar conta em play.google.com/console (US$25)
-- [ ] Proprietário: fazer upload do AAB no Play Console
+- [ ] Preparar screenshots e descrição
+
+**O que o proprietário faz:**
+- [ ] Criar conta em play.google.com/console (US$25 — taxa única)
+- [ ] Hospedar política de privacidade (GitHub Pages — gratuito)
+- [ ] Fazer upload do AAB no Play Console
+- [ ] Preencher formulário de classificação etária
 - [ ] Aguardar revisão (~3–7 dias)
 
 ### ETAPA 3 — Apple App Store
@@ -249,9 +264,20 @@ Não existe feed compartilhado entre dispositivos diferentes.
 **O que fazer:**
 - [ ] Preparar código Flutter para iOS
 - [ ] Proprietário: criar conta em developer.apple.com (US$99/ano)
-- [ ] Build via Codemagic (CI/CD gratuito — assistente guia o processo)
+- [ ] Build via Codemagic (CI/CD — assistente guia o processo)
 - [ ] Preparar screenshots para iPhone
 - [ ] Aguardar revisão Apple (~1–3 dias)
+
+### ETAPA 4 — Migração para Firebase Storage (futuro, opcional)
+**Objetivo:** Escalar armazenamento de imagens além do Firestore
+**Quando fazer:** Quando o app tiver usuários reais e o Firestore estiver chegando ao limite
+**Impacto:** Zero — contas, fotos antigas e dados são preservados
+**Protocolo:**
+1. `git tag v1.x-stable` — marcar versão estável atual
+2. `git checkout -b firebase-storage` — branch separada
+3. Configurar CORS no Firebase Storage (1 comando via Google Cloud SDK)
+4. Testar exaustivamente
+5. Merge só quando 100% funcionando
 
 ---
 
@@ -259,10 +285,13 @@ Não existe feed compartilhado entre dispositivos diferentes.
 
 | Problema | Causa | Status |
 |----------|-------|--------|
-| Fotos somem após alguns minutos | localStorage cheio (limite 5MB) | ✅ Resolvido com IndexedDB |
-| App quebrou ao integrar Firebase | Sem branch separada, sem backup prévio | ✅ Resolvido — protocolo de segurança definido |
+| Fotos sumiam após alguns minutos | localStorage cheio (limite 5MB) | ✅ Resolvido — migrado para Firebase |
+| App quebrou ao integrar Firebase | Sem branch separada, sem backup prévio | ✅ Resolvido — agora funciona |
+| Fotos em branco após integração Firebase | Firebase Storage bloqueado por CORS | ✅ Resolvido — removido Storage, base64 no Firestore |
+| Fotos grandes não carregavam | Firestore limita documento a 1MB | ✅ Resolvido — compressão dart:ui garante < 700KB |
+| Erro network-request-failed | Domínio de preview não autorizado no Firebase | ✅ Resolvido — sandbox.novita.ai adicionado |
+| Push para GitHub deu 403 | Token fine-grained sem permissão suficiente | ✅ Resolvido — usar token classic (ghp_...) |
 | Dois MainActivities no Android | Pastas duplicadas com package names diferentes | ✅ Resolvido |
-| firebase_options.dart com erros | Arquivo residual do Firebase anterior | ✅ Arquivo removido |
 
 ---
 
@@ -282,23 +311,27 @@ flutter pub get
 flutter analyze
 
 # Build web para preview
-flutter build web --release
+lsof -ti:5060 | xargs -r kill -9 2>/dev/null; sleep 1
+cd /home/user/flutter_app && flutter build web --release
 cd build/web && python3 -c "
 import http.server, socketserver
 class H(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header('Access-Control-Allow-Origin','*')
         self.send_header('X-Frame-Options','ALLOWALL')
+        self.send_header('Content-Security-Policy','frame-ancestors *')
         super().end_headers()
     def log_message(self, *a): pass
 with socketserver.TCPServer(('0.0.0.0',5060),H) as s: s.serve_forever()
 " &
 
-# Salvar no GitHub
+# Salvar no GitHub (usar token classic ghp_...)
+git remote set-url origin https://SEU_TOKEN@github.com/gonzalezadvogadobr-pixel/rateme-app.git
 git add . && git commit -m "descrição" && git push origin main
 
 # Voltar para versão estável se algo der errado
 git checkout main
+git checkout v1.1-stable  # tag da versão com Firebase funcionando
 ```
 
 ---
@@ -309,8 +342,8 @@ git checkout main
 |------|-------|--------|
 | Google Play (taxa única) | ~R$ 130 (US$25) | ⏳ Pendente |
 | Apple Developer (anual) | ~R$ 515 (US$99/ano) | ⏳ Pendente |
-| Domínio para política de privacidade | ~R$ 60/ano | ⏳ Pendente |
-| Firebase (backend) | Grátis até ~50k usuários | ⏳ Pendente |
+| Domínio para política de privacidade | Grátis (GitHub Pages) | ⏳ Pendente |
+| Firebase Spark (gratuito até ~50k usuários) | Grátis | ✅ Em uso |
 
 ---
 
@@ -324,6 +357,25 @@ mariana@demo.com  / 123456  (Mariana Lima)
 
 ---
 
+## 🔐 Firebase — Informações do Projeto
+
+| Campo | Valor |
+|-------|-------|
+| Project ID | rateme-a1de6 |
+| Auth Domain | rateme-a1de6.firebaseapp.com |
+| Storage Bucket | rateme-a1de6.firebasestorage.app |
+| Messaging Sender ID | 641618795234 |
+| API Key | AIzaSyBy_5Kkopj7XHdhEeF6xJdU7SFkR-nwFBs |
+| Android App ID | 1:641618795234:android:b3182f5a24028df412dcbb |
+| Web App ID | 1:641618795234:web:79bc6e9ed4ac8e6d12dcbb |
+
+**Domínios autorizados no Firebase Auth:**
+- localhost
+- rateme-a1de6.firebaseapp.com
+- sandbox.novita.ai ← adicionado para preview
+
+---
+
 ## 🗒️ Observações Finais
 
 - O proprietário está no Brasil — comunicação em **português brasileiro**
@@ -331,10 +383,12 @@ mariana@demo.com  / 123456  (Mariana Lima)
 - Antes de qualquer alteração grande: **backup + branch separada + confirmar com proprietário**
 - O proprietário valoriza: honestidade sobre limitações, explicações claras, sem surpresas
 - Linguagem: direta, sem jargão técnico desnecessário
+- Usar sempre **token GitHub classic** (ghp_...) — fine-grained não funciona
 
 ---
 
 *Arquivo criado em: Junho/2025*
-*Última atualização: Junho/2025*
+*Última atualização: Julho/2025*
 *Versão do app: 1.0.0+1*
-*Commit estável: ee73dcf*
+*Commit estável atual: 5b9a53e (PinZap com Firebase funcionando)*
+*Tag estável: v1.0-stable (antes do Firebase)*
