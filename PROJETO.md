@@ -248,14 +248,20 @@ flutter_app/
 
 **O que o assistente faz:**
 - [x] Criar política de privacidade (texto gerado)
-- [ ] Gerar AAB (Android App Bundle) assinado
-- [ ] Preparar screenshots e descrição
+- [x] Gerar AAB assinado (app-release.aab — 48MB — versão 1.0.0+1)
+- [x] Preparar descrição do app (título, descrição curta e completa)
+- [ ] Gerar novo AAB após alterações pendentes
 
 **O que o proprietário faz:**
-- [ ] Criar conta em play.google.com/console (US$25 — taxa única)
-- [ ] Hospedar política de privacidade (GitHub Pages — gratuito)
-- [ ] Fazer upload do AAB no Play Console
-- [ ] Preencher formulário de classificação etária
+- [x] Criar conta em play.google.com/console (US$25 — taxa única)
+- [x] Hospedar política de privacidade (GitHub Pages — https://gonzalezadvogadobr-pixel.github.io/rateme-app/privacy_policy.html)
+- [x] Criar app no Play Console
+- [x] Preencher notas da versão (formato `<pt-BR>...</pt-BR>`)
+- [ ] Verificação de identidade pelo Google (em andamento)
+- [ ] Fazer upload do AAB no Play Console (aguardando verificação)
+- [ ] Adicionar screenshots na ficha da Play Store
+- [ ] Preencher formulário de classificação de conteúdo
+- [ ] Configurar testadores para Teste Interno
 - [ ] Aguardar revisão (~3–7 dias)
 
 ### ETAPA 3 — Apple App Store
@@ -267,6 +273,19 @@ flutter_app/
 - [ ] Build via Codemagic (CI/CD — assistente guia o processo)
 - [ ] Preparar screenshots para iPhone
 - [ ] Aguardar revisão Apple (~1–3 dias)
+
+### 🔧 Alterações Pendentes (aguardando fase de testes)
+Implementar tudo de uma vez no próximo ciclo de desenvolvimento:
+
+- [ ] **Nova logomarca** — substituir `assets/icons/rateme_logo.png` pelo novo ícone push_pin gradiente roxo→rosa (URL: https://www.genspark.ai/api/files/s/mAWvRQiO?cache_control=3600)
+- [ ] **Nomes únicos** — no cadastro, verificar no Firestore se o nome já existe; se sim, exibir erro "Este nome já está em uso. Escolha outro."
+- [ ] **Imagem pequena na tela de publicação** — aumentar o container de prévia da imagem na `create_post_screen.dart` para ficar proporcional ao feed
+- [ ] **Fotos sem borda lateral (edge-to-edge)** — remover padding/margin lateral das fotos no feed e no detalhe do post para ocupar toda a largura da tela
+- [ ] **Botão de configurações (engrenagem)** — adicionar ícone de engrenagem no perfil; tela de configurações com: conta privada/pública, privacidade dos pins, alterar senha, excluir conta
+- [ ] Gerar novo AAB com todas as alterações acima
+- [ ] Fazer upload do AAB atualizado no Play Console
+
+---
 
 ### ETAPA 4 — Migração para Firebase Storage (futuro, opcional)
 **Objetivo:** Escalar armazenamento de imagens além do Firestore
