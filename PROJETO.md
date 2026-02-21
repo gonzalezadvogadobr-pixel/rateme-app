@@ -288,6 +288,7 @@ Implementar tudo de uma vez no próximo ciclo de desenvolvimento:
 - [ ] **Curtir título/alvo do pin** — ao receber um pin, o dono da foto pode curtir o título/alvo daquele pin (ex: curtir "Cabelo", "Roupa", etc.)
 - [ ] **Marcar usuário em comentário (@menção)** — ao digitar "@" em um comentário, exibir lista de usuários para selecionar; o usuário marcado recebe notificação
 - [ ] **Ajustar foto antes de publicar** — opção de crop (recorte), zoom e rotação da foto antes de publicar
+- [ ] **Nome do app no celular** — alterar de "Pin Score" para "PinZap" (nome exibido embaixo do ícone e no cabeçalho do app)
 - [ ] **Publicação de vídeos** — ⏸️ pausado; depende da migração para Firebase Storage (ETAPA 4); retomar análise no futuro
 - [ ] Gerar novo AAB com todas as alterações acima
 - [ ] Fazer upload do AAB atualizado no Play Console
