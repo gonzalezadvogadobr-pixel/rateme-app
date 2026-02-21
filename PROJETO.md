@@ -282,6 +282,13 @@ Implementar tudo de uma vez no próximo ciclo de desenvolvimento:
 - [ ] **Imagem pequena na tela de publicação** — aumentar o container de prévia da imagem na `create_post_screen.dart` para ficar proporcional ao feed
 - [ ] **Fotos sem borda lateral (edge-to-edge)** — remover padding/margin lateral das fotos no feed e no detalhe do post para ocupar toda a largura da tela
 - [ ] **Botão de configurações (engrenagem)** — adicionar ícone de engrenagem no perfil; tela de configurações com: conta privada/pública, privacidade dos pins, alterar senha, excluir conta
+- [ ] **Bloquear usuário** — opção de bloquear outro usuário no perfil público; usuário bloqueado não vê os posts nem o perfil de quem bloqueou; lista de bloqueados nas configurações
+- [ ] **Lista de seguidores e seguindo clicável** — no perfil, ao clicar em "Seguidores" ou "Seguindo" deve abrir lista com os respectivos usuários (com opção de visitar o perfil de cada um)
+- [ ] **Stories** — publicar stories com foto ou vídeo curto (semelhante ao Instagram/TikTok); exibidos no topo do feed; desaparecem após 24 horas
+- [ ] **Curtir título/alvo do pin** — ao receber um pin, o dono da foto pode curtir o título/alvo daquele pin (ex: curtir "Cabelo", "Roupa", etc.)
+- [ ] **Marcar usuário em comentário (@menção)** — ao digitar "@" em um comentário, exibir lista de usuários para selecionar; o usuário marcado recebe notificação
+- [ ] **Ajustar foto antes de publicar** — opção de crop (recorte), zoom e rotação da foto antes de publicar
+- [ ] **Publicação de vídeos** — ⏸️ pausado; depende da migração para Firebase Storage (ETAPA 4); retomar análise no futuro
 - [ ] Gerar novo AAB com todas as alterações acima
 - [ ] Fazer upload do AAB atualizado no Play Console
 
