@@ -149,6 +149,7 @@ class Pin {
   bool isDeleted;
   final DateTime createdAt;
   DateTime updatedAt;
+  List<String> likedBy;
 
   Pin({
     required this.id,
@@ -165,7 +166,24 @@ class Pin {
     this.isDeleted = false,
     required this.createdAt,
     required this.updatedAt,
+    this.likedBy = const [],
   });
+
+  factory Pin.empty() => Pin(
+    id: '', postId: '', authorId: '', authorName: '',
+    xPercent: 0, yPercent: 0, targetLabel: '', score: 0,
+    createdAt: DateTime.now(), updatedAt: DateTime.now(),
+  );
+
+  Pin copyWith({List<String>? likedBy}) => Pin(
+    id: id, postId: postId, authorId: authorId, authorName: authorName,
+    authorAvatarBase64: authorAvatarBase64,
+    xPercent: xPercent, yPercent: yPercent,
+    targetLabel: targetLabel, score: score,
+    comment: comment, isPublic: isPublic, isDeleted: isDeleted,
+    createdAt: createdAt, updatedAt: updatedAt,
+    likedBy: likedBy ?? this.likedBy,
+  );
 
   factory Pin.fromJson(Map<String, dynamic> d) => Pin(
     id: d['id'] as String? ?? '',
@@ -182,6 +200,7 @@ class Pin {
     isDeleted: d['isDeleted'] as bool? ?? false,
     createdAt: _toDateTime(d['createdAt']),
     updatedAt: _toDateTime(d['updatedAt']),
+    likedBy: List<String>.from(d['likedBy'] ?? []),
   );
 
   Map<String, dynamic> toFirestore() => {
@@ -192,6 +211,7 @@ class Pin {
     'comment': comment, 'isPublic': isPublic, 'isDeleted': isDeleted,
     'createdAt': Timestamp.fromDate(createdAt),
     'updatedAt': Timestamp.fromDate(updatedAt),
+    'likedBy': likedBy,
   };
 
   Map<String, dynamic> toJson() => {
@@ -202,6 +222,7 @@ class Pin {
     'comment': comment, 'isPublic': isPublic, 'isDeleted': isDeleted,
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
+    'likedBy': likedBy,
   };
 }
 
@@ -358,5 +379,47 @@ class Follow {
     'followerId': followerId,
     'followingId': followingId,
     'createdAt': createdAt.toIso8601String(),
+  };
+}
+
+// ── Story ─────────────────────────────────────────────────────────────────────
+class Story {
+  final String id;
+  final String ownerId;
+  final String ownerName;
+  final String ownerAvatarBase64;
+  final String imageBase64;
+  final DateTime createdAt;
+  final List<String> viewedBy;
+
+  Story({
+    required this.id,
+    required this.ownerId,
+    required this.ownerName,
+    required this.ownerAvatarBase64,
+    required this.imageBase64,
+    required this.createdAt,
+    required this.viewedBy,
+  });
+
+  bool get isExpired => DateTime.now().difference(createdAt).inHours >= 24;
+
+  factory Story.fromJson(Map<String, dynamic> d) => Story(
+    id: d['id'] as String? ?? '',
+    ownerId: d['ownerId'] as String? ?? '',
+    ownerName: d['ownerName'] as String? ?? '',
+    ownerAvatarBase64: d['ownerAvatarBase64'] as String? ?? '',
+    imageBase64: d['imageBase64'] as String? ?? '',
+    createdAt: _toDateTime(d['createdAt']),
+    viewedBy: List<String>.from(d['viewedBy'] ?? []),
+  );
+
+  Map<String, dynamic> toFirestore() => {
+    'ownerId': ownerId,
+    'ownerName': ownerName,
+    'ownerAvatarBase64': ownerAvatarBase64,
+    'imageBase64': imageBase64,
+    'createdAt': Timestamp.fromDate(createdAt),
+    'viewedBy': viewedBy,
   };
 }

@@ -5,25 +5,23 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 import '../services/database_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Comprime Uint8List usando dart:ui para garantir que caiba no Firestore.
-// Redimensiona para maxDim e aplica qualidade/tamanho até caber em maxBytes.
 // ─────────────────────────────────────────────────────────────────────────────
 Future<Uint8List> _compressImage(
   Uint8List input, {
   int maxDim = 800,
-  int maxBytes = 700 * 1024, // 700 KB → base64 ≈ 933 KB, abaixo do 1 MB do Firestore
+  int maxBytes = 700 * 1024,
 }) async {
-  // Decodifica a imagem (sem targetMax* que não existem nesta versão do Flutter)
   final codec = await ui.instantiateImageCodec(input);
   final frame = await codec.getNextFrame();
   final srcImage = frame.image;
 
-  // Calcula dimensões respeitando o limite maxDim
   final w = srcImage.width;
   final h = srcImage.height;
   int targetW = w;
@@ -38,7 +36,6 @@ Future<Uint8List> _compressImage(
     }
   }
 
-  // Redimensiona via Canvas
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);
   final paint = Paint()..filterQuality = FilterQuality.medium;
@@ -51,13 +48,11 @@ Future<Uint8List> _compressImage(
   final picture = recorder.endRecording();
   final resized = await picture.toImage(targetW, targetH);
 
-  // Exporta como PNG (dart:ui não suporta JPEG nativo na web)
   final byteData = await resized.toByteData(format: ui.ImageByteFormat.png);
   if (byteData == null) return input;
 
   final result = byteData.buffer.asUint8List();
 
-  // Se ainda for grande demais, tenta redimensionar mais agressivamente
   if (result.length > maxBytes && maxDim > 400) {
     return _compressImage(input, maxDim: (maxDim * 0.7).round(), maxBytes: maxBytes);
   }
@@ -89,20 +84,44 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      // Passo 1: ImagePicker faz uma compressão inicial (1200px, qualidade 80)
       final file = await _picker.pickImage(
         source: source,
         maxWidth: 1200,
         maxHeight: 1200,
-        imageQuality: 80,
+        imageQuality: 85,
       );
       if (file == null) return;
 
+      // Abre o cropper para ajuste de foto (crop/rotação)
+      CroppedFile? cropped;
+      if (!kIsWeb) {
+        cropped = await ImageCropper().cropImage(
+          sourcePath: file.path,
+          uiSettings: [
+            AndroidUiSettings(
+              toolbarTitle: 'Ajustar foto',
+              toolbarColor: AppTheme.bgPrimary,
+              toolbarWidgetColor: Colors.white,
+              activeControlsWidgetColor: AppTheme.purple,
+              backgroundColor: AppTheme.bgPrimary,
+              initAspectRatio: CropAspectRatioPreset.original,
+              lockAspectRatio: false,
+              aspectRatioPresets: [
+                CropAspectRatioPreset.square,
+                CropAspectRatioPreset.ratio4x3,
+                CropAspectRatioPreset.original,
+              ],
+            ),
+          ],
+        );
+      }
+
       setState(() => _compressing = true);
 
-      final rawBytes = await file.readAsBytes();
+      final rawBytes = cropped != null
+          ? await cropped.readAsBytes()
+          : await file.readAsBytes();
 
-      // Passo 2: compressão dart:ui — garante tamanho < 700KB (cabe no Firestore)
       final compressed = await _compressImage(rawBytes);
 
       final kb = (compressed.length / 1024).round();
@@ -188,28 +207,18 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Preview da imagem ──────────────────────────────────────────
+            // ── Preview da imagem (ocupa toda a largura, proporção 4:5 igual ao feed) ──
             GestureDetector(
               onTap: _compressing ? null : _showImagePicker,
-              child: Container(
-                width: double.infinity,
-                height: 300,
-                decoration: BoxDecoration(
-                  color: AppTheme.bgCard,
-                  borderRadius: BorderRadius.circular(16),
-                  border: _imageBase64 == null
-                      ? Border.all(
-                          color: AppTheme.purple.withValues(alpha: 0.4),
-                          width: 2,
-                        )
-                      : null,
-                ),
-                child: _compressing
-                    // Comprimindo
-                    ? const Column(
+              child: _compressing
+                  ? Container(
+                      width: double.infinity,
+                      height: MediaQuery.of(context).size.width * (5 / 4),
+                      color: AppTheme.bgCard,
+                      child: const Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           CircularProgressIndicator(color: AppTheme.purple),
@@ -219,151 +228,190 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                             style: TextStyle(color: AppTheme.textSecondary),
                           ),
                         ],
-                      )
-                    : _imageBase64 != null
-                        // Preview com badge de tamanho
-                        ? Stack(
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(14),
-                                child: AppImage(
-                                  imageData: _imageBase64!,
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: 300,
-                                ),
+                      ),
+                    )
+                  : _imageBase64 != null
+                      ? Stack(
+                          children: [
+                            // Foto edge-to-edge sem bordas laterais
+                            AspectRatio(
+                              aspectRatio: 4 / 5,
+                              child: AppImage(
+                                imageData: _imageBase64!,
+                                fit: BoxFit.cover,
+                                width: double.infinity,
                               ),
-                              if (_sizeInfo != null)
-                                Positioned(
-                                  bottom: 8,
-                                  right: 8,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.6),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Text(
-                                      _sizeInfo!,
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w600),
-                                    ),
+                            ),
+                            // Badge de tamanho
+                            if (_sizeInfo != null)
+                              Positioned(
+                                bottom: 8,
+                                right: 8,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.6),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    _sizeInfo!,
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600),
                                   ),
                                 ),
-                            ],
-                          )
-                        // Placeholder vazio
-                        : Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                width: 80,
-                                height: 80,
-                                decoration: BoxDecoration(
-                                  gradient: AppTheme.gradientPurplePink,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.add_photo_alternate_rounded,
-                                  color: Colors.white,
-                                  size: 40,
+                              ),
+                            // Botão de editar (canto superior direito)
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: GestureDetector(
+                                onTap: _showImagePicker,
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.55),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.edit_rounded,
+                                      color: Colors.white, size: 18),
                                 ),
                               ),
-                              const SizedBox(height: 16),
-                              const Text(
-                                'Toque para adicionar foto',
-                                style: TextStyle(
-                                  color: AppTheme.textSecondary,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
+                            ),
+                          ],
+                        )
+                      : AspectRatio(
+                          aspectRatio: 4 / 5,
+                          child: Container(
+                            color: AppTheme.bgCard,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Container(
+                                  width: 80,
+                                  height: 80,
+                                  decoration: const BoxDecoration(
+                                    gradient: AppTheme.gradientPurplePink,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.add_photo_alternate_rounded,
+                                    color: Colors.white,
+                                    size: 40,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                kIsWeb
-                                    ? 'Selecionar arquivo'
-                                    : 'Galeria ou câmera',
-                                style: const TextStyle(
-                                  color: AppTheme.textMuted,
-                                  fontSize: 13,
+                                const SizedBox(height: 16),
+                                const Text(
+                                  'Toque para adicionar foto',
+                                  style: TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 8),
+                                Text(
+                                  kIsWeb
+                                      ? 'Selecionar arquivo'
+                                      : 'Galeria ou câmera',
+                                  style: const TextStyle(
+                                    color: AppTheme.textMuted,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                if (!kIsWeb)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                          color: AppTheme.purple
+                                              .withValues(alpha: 0.4)),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.crop_rounded,
+                                            color: AppTheme.purpleLight,
+                                            size: 14),
+                                        SizedBox(width: 6),
+                                        Text(
+                                          'Recortar após selecionar',
+                                          style: TextStyle(
+                                              color: AppTheme.purpleLight,
+                                              fontSize: 12),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
-              ),
+                        ),
             ),
 
-            // ── Botão trocar imagem ────────────────────────────────────────
-            if (_imageBase64 != null && !_compressing) ...[
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TextButton.icon(
-                    onPressed: _showImagePicker,
-                    icon: const Icon(Icons.refresh_rounded,
-                        color: AppTheme.purpleLight, size: 18),
-                    label: const Text('Trocar imagem',
-                        style: TextStyle(color: AppTheme.purpleLight)),
-                  ),
-                ],
-              ),
-            ],
-
-            const SizedBox(height: 20),
-
-            // ── Legenda ────────────────────────────────────────────────────
-            TextField(
-              controller: _captionCtrl,
-              maxLines: 3,
-              maxLength: 300,
-              style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: const InputDecoration(
-                labelText: 'Legenda (opcional)',
-                hintText: 'Descreva sua foto...',
-                prefixIcon: Icon(Icons.short_text_rounded,
-                    color: AppTheme.textMuted),
-                counterStyle: TextStyle(color: AppTheme.textMuted),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppTheme.bgSurface,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.info_outline,
-                      color: AppTheme.purpleLight, size: 16),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Após publicar, outros usuários poderão criar pins avaliando sua foto.',
-                      style: TextStyle(
-                          color: AppTheme.textSecondary, fontSize: 12),
+                  // ── Legenda ────────────────────────────────────────────────
+                  TextField(
+                    controller: _captionCtrl,
+                    maxLines: 3,
+                    maxLength: 300,
+                    style: const TextStyle(color: AppTheme.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Legenda (opcional)',
+                      hintText: 'Descreva sua foto...',
+                      prefixIcon: Icon(Icons.short_text_rounded,
+                          color: AppTheme.textMuted),
+                      counterStyle: TextStyle(color: AppTheme.textMuted),
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.bgSurface,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.info_outline,
+                            color: AppTheme.purpleLight, size: 16),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Após publicar, outros usuários poderão criar pins avaliando sua foto.',
+                            style: TextStyle(
+                                color: AppTheme.textSecondary, fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // ── Botão publicar ─────────────────────────────────────────
+                  GradientButton(
+                    label: _loading
+                        ? 'Publicando...'
+                        : _compressing
+                            ? 'Otimizando...'
+                            : 'Publicar foto',
+                    icon: Icons.cloud_upload_rounded,
+                    loading: _loading || _compressing,
+                    onPressed:
+                        _imageBase64 != null && !_compressing ? _publish : null,
+                  ),
+                  const SizedBox(height: 24),
                 ],
               ),
-            ),
-            const SizedBox(height: 24),
-
-            // ── Botão publicar ─────────────────────────────────────────────
-            GradientButton(
-              label: _loading
-                  ? 'Publicando...'
-                  : _compressing
-                      ? 'Otimizando...'
-                      : 'Publicar foto',
-              icon: Icons.cloud_upload_rounded,
-              loading: _loading || _compressing,
-              onPressed:
-                  _imageBase64 != null && !_compressing ? _publish : null,
             ),
           ],
         ),
@@ -400,6 +448,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               const Text(
                 'Selecionar imagem',
                 style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Você poderá recortar/ajustar a foto depois de selecionar',
+                style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
               ListTile(

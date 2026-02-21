@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
 import '../services/database_service.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import 'user_profile_screen.dart';
 
 class PostDetailScreen extends StatefulWidget {
   final String postId;
@@ -641,7 +643,9 @@ class _PinTooltip extends StatelessWidget {
               ],
             ),
           ),
-          if (isOwn) ...[
+            // Botão curtir título do pin (tooltip)
+            _PinLikeButton(pin: pin, db: db),
+            if (isOwn) ...[
             IconButton(
               icon: const Icon(Icons.edit_outlined,
                   size: 18, color: AppTheme.purpleLight),
@@ -751,6 +755,41 @@ class _PinListItem extends StatelessWidget {
                   size: 16, color: AppTheme.purpleLight),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Botão de curtir título do pin ───────────────────────────────────────────
+class _PinLikeButton extends StatelessWidget {
+  final Pin pin;
+  final DatabaseService db;
+  const _PinLikeButton({required this.pin, required this.db});
+
+  @override
+  Widget build(BuildContext context) {
+    final liked  = db.isPinLikedByMe(pin.id);
+    final count  = db.getPinLikesCount(pin.id);
+    return GestureDetector(
+      onTap: () => db.togglePinLike(pin.id),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+            color: liked ? AppTheme.pink : AppTheme.textMuted,
+            size: 18,
+          ),
+          if (count > 0)
+            Text(
+              '$count',
+              style: TextStyle(
+                color: liked ? AppTheme.pink : AppTheme.textMuted,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1221,6 +1260,7 @@ class _CommentsSectionState extends State<_CommentsSection> {
   final _ctrl = TextEditingController();
   bool _sending = false;
   bool _expanded = false;
+  List<String> _mentionSuggestions = [];
 
   @override
   void dispose() {
@@ -1228,12 +1268,43 @@ class _CommentsSectionState extends State<_CommentsSection> {
     super.dispose();
   }
 
+  void _onTextChanged(String value, DatabaseService db) {
+    // Detecta quando o usuário está digitando @
+    final text = value;
+    final cursor = _ctrl.selection.baseOffset;
+    if (cursor < 0) return;
+    final beforeCursor = text.substring(0, cursor.clamp(0, text.length));
+    final atIndex = beforeCursor.lastIndexOf('@');
+    if (atIndex != -1) {
+      final query = beforeCursor.substring(atIndex + 1);
+      if (!query.contains(' ')) {
+        final suggestions = db.searchUsers(query).take(5).toList();
+        setState(() => _mentionSuggestions = suggestions.map((u) => u.name).toList());
+        return;
+      }
+    }
+    setState(() => _mentionSuggestions = []);
+  }
+
+  void _insertMention(String name) {
+    final text = _ctrl.text;
+    final cursor = _ctrl.selection.baseOffset.clamp(0, text.length);
+    final before = text.substring(0, cursor);
+    final after  = text.substring(cursor);
+    final atIndex = before.lastIndexOf('@');
+    if (atIndex == -1) return;
+    final newText = '${before.substring(0, atIndex)}@$name $after';
+    _ctrl.text = newText;
+    _ctrl.selection = TextSelection.collapsed(offset: atIndex + name.length + 2);
+    setState(() => _mentionSuggestions = []);
+  }
+
   Future<void> _send(DatabaseService db) async {
     if (_ctrl.text.trim().isEmpty) return;
     setState(() => _sending = true);
     await db.addComment(widget.postId, _ctrl.text.trim());
     _ctrl.clear();
-    if (mounted) setState(() => _sending = false);
+    if (mounted) setState(() { _sending = false; _mentionSuggestions = []; });
   }
 
   @override
@@ -1290,6 +1361,28 @@ class _CommentsSectionState extends State<_CommentsSection> {
                 ),
             ],
             const SizedBox(height: 12),
+            // Sugestões de menção @
+            if (_mentionSuggestions.isNotEmpty)
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.bgCard,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.purple.withValues(alpha: 0.3)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: _mentionSuggestions.map((name) => ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.alternate_email_rounded,
+                        color: AppTheme.purpleLight, size: 16),
+                    title: Text(name,
+                        style: const TextStyle(
+                            color: AppTheme.textPrimary, fontSize: 13)),
+                    onTap: () => _insertMention(name),
+                  )).toList(),
+                ),
+              ),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -1305,8 +1398,9 @@ class _CommentsSectionState extends State<_CommentsSection> {
                     maxLines: null,
                     style: const TextStyle(
                         color: AppTheme.textPrimary, fontSize: 14),
+                    onChanged: (v) => _onTextChanged(v, db),
                     decoration: InputDecoration(
-                      hintText: 'Adicionar comentário…',
+                      hintText: 'Adicionar comentário… (@ para mencionar)',
                       hintStyle: const TextStyle(
                           color: AppTheme.textMuted, fontSize: 13),
                       filled: true,
@@ -1316,6 +1410,20 @@ class _CommentsSectionState extends State<_CommentsSection> {
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(20),
                         borderSide: BorderSide.none,
+                      ),
+                      prefixIcon: IconButton(
+                        icon: const Icon(Icons.alternate_email_rounded,
+                            size: 16, color: AppTheme.purpleLight),
+                        onPressed: () {
+                          final pos = _ctrl.selection.baseOffset
+                              .clamp(0, _ctrl.text.length);
+                          final before = _ctrl.text.substring(0, pos);
+                          final after  = _ctrl.text.substring(pos);
+                          _ctrl.text = '${before}@$after';
+                          _ctrl.selection = TextSelection.collapsed(
+                              offset: pos + 1);
+                          _onTextChanged(_ctrl.text, db);
+                        },
                       ),
                       suffixIcon: _sending
                           ? const SizedBox(
@@ -1418,11 +1526,7 @@ class _CommentItem extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 3),
-                  Text(
-                    comment.text,
-                    style: const TextStyle(
-                        color: AppTheme.textSecondary, fontSize: 13),
-                  ),
+                  _CommentText(text: comment.text, db: db, context: context),
                 ],
               ),
             ),
@@ -1430,5 +1534,70 @@ class _CommentItem extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ── Renderiza texto do comentário com menções @usuario em roxo ────────────────
+class _CommentText extends StatelessWidget {
+  final String text;
+  final DatabaseService db;
+  final BuildContext context;
+
+  const _CommentText({
+    required this.text,
+    required this.db,
+    required this.context,
+  });
+
+  @override
+  Widget build(BuildContext _) {
+    final regex = RegExp(r'@(\w+)');
+    final spans = <TextSpan>[];
+    int last = 0;
+    for (final match in regex.allMatches(text)) {
+      if (match.start > last) {
+        spans.add(TextSpan(
+          text: text.substring(last, match.start),
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        ));
+      }
+      final mention = match.group(0)!;
+      final name = match.group(1)!;
+      final user = db.users.where(
+          (u) => u.name.toLowerCase() == name.toLowerCase()).firstOrNull;
+      spans.add(TextSpan(
+        text: mention,
+        style: const TextStyle(
+          color: AppTheme.purpleLight,
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
+        recognizer: user != null
+            ? (TapGestureRecognizer()
+              ..onTap = () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => UserProfileScreen(userId: user.id),
+                  ),
+                );
+              })
+            : null,
+      ));
+      last = match.end;
+    }
+    if (last < text.length) {
+      spans.add(TextSpan(
+        text: text.substring(last),
+        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+      ));
+    }
+    if (spans.isEmpty) {
+      spans.add(TextSpan(
+        text: text,
+        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+      ));
+    }
+    return RichText(text: TextSpan(children: spans));
   }
 }

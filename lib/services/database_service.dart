@@ -128,6 +128,14 @@ class DatabaseService extends ChangeNotifier {
     required String password,
   }) async {
     try {
+      // Verificar se o nome já está em uso
+      final nameQuery = await _db.collection('users')
+          .where('name', isEqualTo: name.trim())
+          .get();
+      if (nameQuery.docs.isNotEmpty) {
+        return 'Este nome já está em uso. Escolha outro.';
+      }
+
       final cred = await _auth.createUserWithEmailAndPassword(
         email: email, password: password,
       );
@@ -638,9 +646,156 @@ class DatabaseService extends ChangeNotifier {
     }
   }
 
+  // ── BLOQUEAR USUÁRIO ─────────────────────────────────────────────────────────
+  List<String> _blockedIds = [];
+  List<String> get blockedIds => _blockedIds;
+
+  bool isBlocked(String userId) => _blockedIds.contains(userId);
+
+  Future<void> loadBlockedUsers() async {
+    if (_currentUser == null) return;
+    try {
+      final doc = await _db.collection('blocks').doc(_currentUser!.id).get();
+      if (doc.exists) {
+        _blockedIds = List<String>.from(doc.data()?['blockedIds'] ?? []);
+      }
+    } catch (e) { if (kDebugMode) debugPrint('[DB] loadBlockedUsers: $e'); }
+    notifyListeners();
+  }
+
+  Future<void> toggleBlock(String targetId) async {
+    if (_currentUser == null) return;
+    if (_blockedIds.contains(targetId)) {
+      _blockedIds.remove(targetId);
+    } else {
+      _blockedIds.add(targetId);
+      // Deseguir automaticamente ao bloquear
+      final isF = isFollowing(targetId);
+      if (isF) await toggleFollow(targetId);
+    }
+    await _db.collection('blocks').doc(_currentUser!.id).set({
+      'blockedIds': _blockedIds,
+    });
+    notifyListeners();
+  }
+
+  // ── LISTA DE SEGUIDORES / SEGUINDO ────────────────────────────────────────────
+  List<AppUser> getFollowersList(String userId) {
+    final ids = _follows
+        .where((f) => f.followingId == userId)
+        .map((f) => f.followerId)
+        .toSet();
+    return _users.where((u) => ids.contains(u.id)).toList();
+  }
+
+  List<AppUser> getFollowingList(String userId) {
+    final ids = _follows
+        .where((f) => f.followerId == userId)
+        .map((f) => f.followingId)
+        .toSet();
+    return _users.where((u) => ids.contains(u.id)).toList();
+  }
+
+  // ── CURTIR TÍTULO/ALVO DO PIN ─────────────────────────────────────────────────
+  Future<void> togglePinLike(String pinId) async {
+    if (_currentUser == null) return;
+    final myId = _currentUser!.id;
+    final idx = _pins.indexWhere((p) => p.id == pinId);
+    if (idx == -1) return;
+    final pin = _pins[idx];
+    final likedBy = List<String>.from(pin.likedBy);
+    if (likedBy.contains(myId)) {
+      likedBy.remove(myId);
+    } else {
+      likedBy.add(myId);
+    }
+    _pins[idx] = pin.copyWith(likedBy: likedBy);
+    await _db.collection('pins').doc(pinId).update({'likedBy': likedBy});
+    notifyListeners();
+  }
+
+  bool isPinLikedByMe(String pinId) {
+    final pin = _pins.firstWhere((p) => p.id == pinId, orElse: () => Pin.empty());
+    return pin.likedBy.contains(_currentUser?.id ?? '');
+  }
+
+  int getPinLikesCount(String pinId) {
+    final pin = _pins.firstWhere((p) => p.id == pinId, orElse: () => Pin.empty());
+    return pin.likedBy.length;
+  }
+
+  // ── STORIES ──────────────────────────────────────────────────────────────────
+  List<Story> _stories = [];
+  List<Story> get stories => _stories;
+
+  Stream<List<Story>>? _storiesStream;
+
+  Stream<List<Story>> get storiesStream {
+    _storiesStream ??= _db
+        .collection('stories')
+        .orderBy('createdAt', descending: false)
+        .snapshots()
+        .map((snap) {
+          final now = DateTime.now();
+          return snap.docs
+              .map((d) => Story.fromJson({...d.data(), 'id': d.id}))
+              .where((s) => now.difference(s.createdAt).inHours < 24)
+              .toList();
+        });
+    return _storiesStream!;
+  }
+
+  Future<void> createStory({required Uint8List imageBytes}) async {
+    if (_currentUser == null) return;
+    final sid = _uuid.v4();
+    final imageData = _toBase64DataUri(imageBytes);
+    final story = Story(
+      id: sid,
+      ownerId: _currentUser!.id,
+      ownerName: _currentUser!.name,
+      ownerAvatarBase64: _currentUser!.avatarBase64 ?? '',
+      imageBase64: imageData,
+      createdAt: DateTime.now(),
+      viewedBy: [],
+    );
+    await _db.collection('stories').doc(sid).set(story.toFirestore());
+    notifyListeners();
+  }
+
+  Future<void> markStoryViewed(String storyId) async {
+    if (_currentUser == null) return;
+    final myId = _currentUser!.id;
+    await _db.collection('stories').doc(storyId).update({
+      'viewedBy': FieldValue.arrayUnion([myId]),
+    });
+  }
+
+  // ── ALTERAR SENHA ──────────────────────────────────────────────────────────────
+  Future<String?> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return 'Usuário não autenticado.';
+      final cred = EmailAuthProvider.credential(
+        email: user.email!, password: currentPassword,
+      );
+      await user.reauthenticateWithCredential(cred);
+      await user.updatePassword(newPassword);
+      return null;
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'wrong-password') return 'Senha atual incorreta.';
+      return 'Erro ao alterar senha: ${e.message}';
+    } catch (e) {
+      return 'Erro ao alterar senha: $e';
+    }
+  }
+
   // ── REFRESH ───────────────────────────────────────────────────────────────────
   Future<void> refresh() async {
     await _loadAllData();
+    await loadBlockedUsers();
     notifyListeners();
   }
 }

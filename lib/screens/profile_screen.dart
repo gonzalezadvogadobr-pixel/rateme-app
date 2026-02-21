@@ -6,7 +6,8 @@ import '../models/models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 import 'post_detail_screen.dart';
-import 'search_screen.dart';
+import 'settings_screen.dart';
+import 'followers_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -128,13 +129,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 setState(() => _editMode = !_editMode);
               },
             ),
-            // Busca
+            // Configurações
             IconButton(
-              icon: const Icon(Icons.search_rounded,
+              icon: const Icon(Icons.settings_outlined,
                   color: AppTheme.textSecondary),
               onPressed: () => Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const SearchScreen()),
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
               ),
             ),
             IconButton(
@@ -319,16 +320,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 value: db.getUserPosts(user.id).length.toString(),
                 label: 'Posts',
                 color: AppTheme.purpleLight,
+                onTap: null,
               ),
               _ProfileStat(
                 value: db.followersCount(user.id).toString(),
                 label: 'Seguidores',
                 color: AppTheme.pink,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => FollowersScreen(
+                      userId: user.id,
+                      showFollowers: true,
+                    ),
+                  ),
+                ),
               ),
               _ProfileStat(
                 value: db.followingCount(user.id).toString(),
                 label: 'Seguindo',
                 color: AppTheme.success,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => FollowersScreen(
+                      userId: user.id,
+                      showFollowers: false,
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
@@ -540,31 +560,39 @@ class _ProfileStat extends StatelessWidget {
   final String value;
   final String label;
   final Color color;
+  final VoidCallback? onTap;
 
   const _ProfileStat({
     required this.value,
     required this.label,
     required this.color,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            color: color,
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+            ),
           ),
-        ),
-        Text(
-          label,
-          style: const TextStyle(
-              color: AppTheme.textMuted, fontSize: 11),
-        ),
-      ],
+          Text(
+            label,
+            style: TextStyle(
+              color: onTap != null ? color.withValues(alpha: 0.7) : AppTheme.textMuted,
+              fontSize: 11,
+              decoration: onTap != null ? TextDecoration.underline : null,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
