@@ -289,6 +289,8 @@ Implementar tudo de uma vez no próximo ciclo de desenvolvimento:
 - [ ] **Marcar usuário em comentário (@menção)** — ao digitar "@" em um comentário, exibir lista de usuários para selecionar; o usuário marcado recebe notificação
 - [ ] **Ajustar foto antes de publicar** — opção de crop (recorte), zoom e rotação da foto antes de publicar
 - [ ] **Nome do app no celular** — alterar de "Pin Score" para "PinZap" (nome exibido embaixo do ícone e no cabeçalho do app)
+- [ ] **Perfil clicável no feed** — ao clicar no nome ou foto de um usuário no feed, abrir diretamente o perfil dele com opção de seguir (sem precisar ir na lupa)
+- [ ] **Busca por nome na lupa** — na tela de busca, permitir pesquisar usuários digitando o nome (hoje só lista, sem campo de busca funcional)
 - [ ] **Publicação de vídeos** — ⏸️ pausado; depende da migração para Firebase Storage (ETAPA 4); retomar análise no futuro
 - [ ] Gerar novo AAB com todas as alterações acima
 - [ ] Fazer upload do AAB atualizado no Play Console
